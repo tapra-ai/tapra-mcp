@@ -1,0 +1,58 @@
+{
+  "name": "@tapra/mcp",
+  "version": "0.1.0",
+  "description": "Tapra MCP server: Tunisian Derja/French/English transcription, speech, voiceovers, translation, and Arabizi conversion for Claude, Cursor, and other MCP clients.",
+  "mcpName": "io.github.tapra-ai/tapra-mcp",
+  "license": "MIT",
+  "author": "Tapra <contact@tapra.tn>",
+  "homepage": "https://tapra.tn/mcp",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tapra-ai/tapra-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/tapra-ai/tapra-mcp/issues"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "tapra",
+    "tunisian",
+    "derja",
+    "arabizi",
+    "speech-to-text",
+    "text-to-speech",
+    "subtitles"
+  ],
+  "type": "module",
+  "bin": {
+    "tapra-mcp": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "node dist/index.js",
+    "prepublishOnly": "npm run build",
+    "test": "npm run build && node --test --test-concurrency=1 \"test/*.test.mjs\""
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "@tapra/sdk": "^0.1.1",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "~5.7.2"
+  }
+}

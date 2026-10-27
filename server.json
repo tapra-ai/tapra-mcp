@@ -1,0 +1,49 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.tapra-ai/tapra-mcp",
+  "title": "Tapra",
+  "description": "Tunisian Derja speech tools: transcribe and subtitle, Tapra voices and voiceovers, translation, Arabizi conversion.",
+  "version": "0.1.0",
+  "websiteUrl": "https://tapra.tn/mcp",
+  "repository": {
+    "url": "https://github.com/tapra-ai/tapra-mcp",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "@tapra/mcp",
+      "version": "0.1.0",
+      "runtimeHint": "npx",
+      "transport": { "type": "stdio" },
+      "environmentVariables": [
+        {
+          "name": "TAPRA_API_KEY",
+          "description": "Your Tapra API key (tapra_sk_live_…), from https://tapra.tn/dashboard/api-keys",
+          "isRequired": true,
+          "isSecret": true
+        },
+        {
+          "name": "TAPRA_OUTPUT_DIR",
+          "description": "Folder where results are saved",
+          "default": "~/Tapra"
+        },
+        {
+          "name": "TAPRA_BASE_PATH",
+          "description": "Input files must be inside this folder",
+          "default": "~"
+        },
+        {
+          "name": "TAPRA_MAX_COST_TND",
+          "description": "Refuse any single call estimated above this many TND"
+        },
+        {
+          "name": "TAPRA_MCP_OUTPUT_MODE",
+          "description": "files, resources (returned in the chat) or both",
+          "default": "files"
+        }
+      ]
+    }
+  ]
+}
