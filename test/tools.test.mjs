@@ -4,7 +4,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { after, before, describe, test } from 'node:test';
 import { ffmpeg, hasFfmpeg, makeFolders, startServer } from './helpers/harness.mjs';
+import { spawnSync } from 'node:child_process';
 import { sineWav, startMock } from './helpers/mock-api.mjs';
+
+function hasSubtitlesFilter() {
+  const bin = process.env.TAPRA_FFMPEG_PATH || 'ffmpeg';
+  const res = spawnSync(bin, ['-hide_banner', '-f', 'lavfi', '-i', 'nullsrc=s=16x16:d=0.04', '-vf', 'subtitles', '-f', 'null', '-'], { encoding: 'utf8' });
+  return !/No such filter/i.test(res.stderr ?? '');
+}
 
 let mock;
 let folders;
@@ -240,7 +247,13 @@ describe('video', { skip: !hasFfmpeg && 'needs ffmpeg' }, () => {
     const r = await tapra.call('transcribe_video', { input_path: 'clip.mp4', burn_subtitles: true, output_dir: 'vid' });
     assert.equal(r.isError, false, r.text);
     const dir = path.join(folders.output, 'vid');
-    assert.ok(fs.statSync(path.join(dir, 'clip_subtitled.mp4')).size > 1000);
+    if (hasSubtitlesFilter()) {
+      assert.ok(fs.statSync(path.join(dir, 'clip_subtitled.mp4')).size > 1000);
+    } else {
+      // e.g. Homebrew's ffmpeg (no libass): subtitles still saved, burn-in explained.
+      assert.match(r.text, /no 'subtitles' filter/);
+      assert.ok(!fs.existsSync(path.join(dir, 'clip_subtitled.mp4')));
+    }
     assert.match(fs.readFileSync(path.join(dir, 'clip.srt'), 'utf8'), /عسلامة/);
     assert.ok(fs.existsSync(path.join(dir, 'clip.vtt')) && fs.existsSync(path.join(dir, 'clip.txt')));
   });
