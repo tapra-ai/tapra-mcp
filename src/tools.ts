@@ -387,7 +387,7 @@ export function registerTools(server: McpServer): void {
             const font = args.subtitle_font.replace(/[',:\\]/g, '');
             const style = `FontName=${font},FontSize=18,Outline=1,Shadow=0,MarginV=24`;
             await ffmpeg(
-              ['-i', input, '-vf', `subtitles=subs.srt:force_style='${style}'`, '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-c:a', 'aac', '-b:a', '192k', videoOut],
+              ['-i', input, '-vf', `subtitles=filename=subs.srt:force_style='${style}'`, '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-c:a', 'aac', '-b:a', '192k', videoOut],
               tmp
             );
           } finally {
