@@ -14,7 +14,6 @@ const PRICES = {
   minimumChargeMicroTnd: 2950,
   welcomeCreditTnd: 2,
   topUpPackagesTnd: [10],
-  ttsCloneMultiplier: 1.25,
   ttsFlashMultiplier: 0.8,
   services: {
     offline: price('tapra-voice-v1', 'audio_ms', 60000, 150000),

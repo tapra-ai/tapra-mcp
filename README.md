@@ -125,7 +125,7 @@ spills into the next one.
 |---|---|---|
 | `TAPRA_API_KEY` | required | Your `tapra_sk_live_…` key |
 | `TAPRA_API_URL` | read from tapra.tn | Force an API origin (e.g. `http://127.0.0.1:8787` for a local model host) |
-| `TAPRA_SITE_URL` | `https://tapra.tn` | Website serving the price list, balance, and the current API address |
+| `TAPRA_SITE_URL` | `https://www.tapra.tn` | Website serving the price list, balance, and the current API address |
 | `TAPRA_OUTPUT_DIR` | `~/Tapra` | Where generated files go; outputs can't be written anywhere else |
 | `TAPRA_BASE_PATH` | home folder | Input files must be inside this folder; relative paths resolve here |
 | `TAPRA_MCP_OUTPUT_MODE` | `files` | `files` saves results; `resources` returns them inline only (nothing saved); `both` does both |

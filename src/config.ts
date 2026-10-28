@@ -4,7 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 
 /** Website origin: serves the price list, account balance, and the current API address. */
-export const DEFAULT_SITE_URL = 'https://tapra.tn';
+// www, not the apex: the apex 308-redirects and fetch drops the Authorization header across hosts.
+export const DEFAULT_SITE_URL = 'https://www.tapra.tn';
 /** Used only if the website cannot be reached to discover the API address. */
 export const FALLBACK_API_URL = 'https://api.tapra.tn';
 

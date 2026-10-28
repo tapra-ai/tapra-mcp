@@ -233,7 +233,6 @@ export function registerTools(server: McpServer): void {
             const unit = p.unit === 'audio_ms' ? 'minute of audio' : `${p.unitsPerChargeUnit} characters`;
             lines.push(`  ${name} (${p.model}): ${formatTnd(p.tndPerUnit)} per ${unit}`);
           }
-          lines.push(`  Voice clone: ${prices.ttsCloneMultiplier}x the speech rate`);
         } catch {
           lines.push('Prices: price list unreachable.');
         }
