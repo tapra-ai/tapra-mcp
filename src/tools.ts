@@ -4,7 +4,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { TapraError, type Tapra } from '@tapra/sdk';
 import { z } from 'zod';
 import { config, maskedKey, resolveInput, resolveOutput, resolveOutputDir } from './config.js';
-import { decodeWav, encodeWav, extractWav16k, ffmpeg, hasFfmpeg, makeTempDir, mixAt, probe, removeDir, requireFfmpeg, type MonoAudio } from './media.js';
+import { decodeWav, encodeWav, extractWav16k, ffmpeg, hasFfmpeg, hasFfmpegFilter, makeTempDir, mixAt, probe, removeDir, requireFfmpeg, type MonoAudio } from './media.js';
 import { encodeAudio, extensionFor, formatSchema, needsFfmpeg, type AudioFormat } from './formats.js';
 import { inline, LOCAL_WRITE, maxCost, PAID, progressFrom, READ_ONLY, run, type Progress } from './toolkit.js';
 import { buildCues, parseSubtitles, splitScript, toSrt, toTxt, toVtt, type Cue } from './subtitles.js';
@@ -378,6 +378,12 @@ export function registerTools(server: McpServer): void {
 
         if (args.burn_subtitles && !rendered.cues.length) {
           notes.push('No speech found, so no subtitled video was made.');
+        } else if (args.burn_subtitles && !(await hasFfmpegFilter('subtitles'))) {
+          notes.push(
+            "No subtitled video: this ffmpeg has no 'subtitles' filter (it was built without libass). " +
+              'Install a full build (Homebrew: brew install ffmpeg-full; Windows: winget install Gyan.FFmpeg) ' +
+              'or set TAPRA_FFMPEG_PATH to one. The subtitle file above is ready to use.'
+          );
         } else if (args.burn_subtitles) {
           const videoOut = resolveOutput(args.video_output_path, `${name}_subtitled`, 'mp4');
           const tmp = makeTempDir('burn');

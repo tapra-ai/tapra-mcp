@@ -47,6 +47,24 @@ export async function requireFfmpeg(feature: string): Promise<void> {
   }
 }
 
+const filterCache = new Map<string, boolean>();
+
+/** True when this ffmpeg build has the named filter (Homebrew's ffmpeg has no `subtitles`). */
+export async function hasFfmpegFilter(name: string): Promise<boolean> {
+  const cached = filterCache.get(name);
+  if (cached !== undefined) return cached;
+  let found = false;
+  try {
+    // A missing filter fails the graph with "No such filter"; any other error means it exists.
+    const { stderr } = await runFfmpegRaw(['-hide_banner', '-f', 'lavfi', '-i', 'nullsrc=s=16x16:d=0.04', '-vf', name, '-f', 'null', '-']);
+    found = !/No such filter/i.test(stderr);
+  } catch {
+    found = false;
+  }
+  filterCache.set(name, found);
+  return found;
+}
+
 /** Runs ffmpeg and throws with its last error lines on failure. */
 export async function ffmpeg(args: string[], cwd?: string): Promise<void> {
   const { code, stderr } = await runFfmpegRaw(['-loglevel', 'error', '-y', ...args], cwd);
