@@ -4,6 +4,7 @@ import path from 'node:path';
 import { estimateCostTnd, fetchTapraPrices, TapraClient, TapraError, type Tapra, type TapraPrices } from '@tapra/sdk';
 import { config, FALLBACK_API_URL } from './config.js';
 import { extractWav16k, hasFfmpeg, makeTempDir, probe, removeDir } from './media.js';
+import { linkSpeakers, renumberSpeakers } from './speakers.js';
 
 // ---------------------------------------------------------------------------
 // API address: TAPRA_API_URL, else whatever the website currently advertises,
@@ -173,6 +174,21 @@ export interface MergedTranscript {
 }
 
 const MAX_DIRECT_UPLOAD_BYTES = 100 * 1024 * 1024;
+/**
+ * Neighbouring chunks share this much audio. Words are taken from whichever chunk
+ * has them away from its cut, and speakers are matched across chunks by who talks
+ * in the shared part, so labels stay the same for the whole file.
+ */
+const CHUNK_OVERLAP_SECONDS = 30;
+
+interface Piece {
+  file: string;
+  /** Where the extracted audio starts in the original. */
+  offset: number;
+  /** Keep items whose midpoint is in [keepFrom, keepTo). */
+  keepFrom: number;
+  keepTo: number;
+}
 
 export async function transcribeMedia(inputPath: string, opts: TranscribeOptions): Promise<MergedTranscript> {
   requireApiKey();
@@ -185,31 +201,33 @@ export async function transcribeMedia(inputPath: string, opts: TranscribeOptions
     ...(opts.prompt ? { prompt: opts.prompt } : {})
   };
 
-  const pieces: { file: string; offset: number }[] = [];
+  const pieces: Piece[] = [];
   let tmp: string | undefined;
   try {
     if (await hasFfmpeg()) {
       const info = await probe(inputPath);
       if (!info.hasAudio) throw new Error(`No audio track found in ${inputPath}.`);
       const duration = info.durationSeconds ?? 0;
-      checkBudget(await estimate('offline', duration * 1000), opts.maxCostTnd, `Transcribing ${Math.round(duration)} s`);
-      tmp = makeTempDir('stt');
       const chunkSeconds = Math.max(60, (opts.chunkMinutes ?? 15) * 60);
-      if (duration > chunkSeconds + 30) {
-        for (let start = 0, i = 0; start < duration; start += chunkSeconds, i++) {
+      const chunked = duration > chunkSeconds + 30;
+      const count = chunked ? Math.ceil(duration / chunkSeconds) : 1;
+      const billed = duration + (count - 1) * CHUNK_OVERLAP_SECONDS;
+      checkBudget(await estimate('offline', billed * 1000), opts.maxCostTnd, `Transcribing ${Math.round(duration)} s`);
+      tmp = makeTempDir('stt');
+      if (chunked) {
+        const half = CHUNK_OVERLAP_SECONDS / 2;
+        for (let i = 0; i < count; i++) {
+          const nominal = i * chunkSeconds;
+          const from = i === 0 ? 0 : nominal - CHUNK_OVERLAP_SECONDS;
+          const to = Math.min(duration, nominal + chunkSeconds);
           const file = path.join(tmp, `chunk_${String(i).padStart(3, '0')}.wav`);
-          await extractWav16k(inputPath, file, start, Math.min(chunkSeconds, duration - start));
-          pieces.push({ file, offset: start });
-        }
-        if (opts.diarize) {
-          warnings.push(
-            `Audio was split into ${pieces.length} chunks; speaker labels restart in each chunk, so the same person may get different labels.`
-          );
+          await extractWav16k(inputPath, file, from, to - from);
+          pieces.push({ file, offset: from, keepFrom: i === 0 ? -Infinity : nominal - half, keepTo: i === count - 1 ? Infinity : nominal + chunkSeconds - half });
         }
       } else {
         const file = path.join(tmp, 'audio.wav');
         await extractWav16k(inputPath, file);
-        pieces.push({ file, offset: 0 });
+        pieces.push({ file, offset: 0, keepFrom: -Infinity, keepTo: Infinity });
       }
     } else {
       const size = fs.statSync(inputPath).size;
@@ -217,7 +235,7 @@ export async function transcribeMedia(inputPath: string, opts: TranscribeOptions
         throw new Error('File is over 100 MB. Install ffmpeg so the MCP server can compress and split it.');
       }
       warnings.push('ffmpeg not found: uploaded the file as-is (no cost estimate, no chunking).');
-      pieces.push({ file: inputPath, offset: 0 });
+      pieces.push({ file: inputPath, offset: 0, keepFrom: -Infinity, keepTo: Infinity });
     }
 
     const merged: MergedTranscript = {
@@ -232,6 +250,10 @@ export async function transcribeMedia(inputPath: string, opts: TranscribeOptions
       spend
     };
     const texts: string[] = [];
+    let speakerCount = 0;
+    const nextId = () => `G${++speakerCount}`;
+    // The previous chunk's turns before trimming, under the shared labels.
+    let previous: Tapra.SpeakerTurn[] = [];
     for (const [i, piece] of pieces.entries()) {
       opts.onProgress?.(i, pieces.length, pieces.length > 1 ? `Transcribing chunk ${i + 1} of ${pieces.length}` : 'Transcribing');
       const res = await client.transcriptions.create(
@@ -239,20 +261,48 @@ export async function transcribeMedia(inputPath: string, opts: TranscribeOptions
         requestOptions()
       );
       spend.add(res.usage);
-      texts.push(res.text.trim());
       merged.language ||= res.language;
       merged.duration = Math.max(merged.duration, piece.offset + res.duration);
+      const keep = (a: number, b: number) => {
+        const mid = (a + b) / 2;
+        return mid >= piece.keepFrom && mid < piece.keepTo;
+      };
+      const chunkTexts: string[] = [];
       for (const s of res.segments) {
-        merged.segments.push({ ...s, id: merged.segments.length, start: s.start + piece.offset, end: s.end + piece.offset });
+        const start = s.start + piece.offset;
+        const end = s.end + piece.offset;
+        if (!keep(start, end)) continue;
+        merged.segments.push({ ...s, id: merged.segments.length, start, end });
+        chunkTexts.push(s.text.trim());
       }
+      texts.push(pieces.length > 1 ? chunkTexts.join(' ') : res.text.trim());
       for (const w of res.words ?? []) {
-        merged.words.push({ ...w, t0_ms: w.t0_ms + piece.offset * 1000, t1_ms: w.t1_ms + piece.offset * 1000 });
+        const t0 = w.t0_ms + piece.offset * 1000;
+        const t1 = w.t1_ms + piece.offset * 1000;
+        if (keep(t0 / 1000, t1 / 1000)) merged.words.push({ ...w, t0_ms: t0, t1_ms: t1 });
       }
-      const prefix = pieces.length > 1 ? `c${i + 1}-` : '';
-      for (const t of res.diarization?.turns ?? []) {
-        merged.turns.push({ ...t, speaker: `${prefix}${t.speaker}`, start_ms: t.start_ms + piece.offset * 1000, end_ms: t.end_ms + piece.offset * 1000 });
+      const raw = (res.diarization?.turns ?? []).map((t) => ({ ...t, start_ms: t.start_ms + piece.offset * 1000, end_ms: t.end_ms + piece.offset * 1000 }));
+      if (raw.length) {
+        const shared: [number, number] = [piece.offset * 1000, (piece.offset + CHUNK_OVERLAP_SECONDS) * 1000];
+        const map = i === 0 ? new Map<string, string>() : linkSpeakers(previous, raw, shared, nextId);
+        for (const t of raw) if (!map.has(t.speaker)) map.set(t.speaker, nextId());
+        previous = raw.map((t) => ({ ...t, speaker: map.get(t.speaker)! }));
+        for (const t of raw) {
+          const start = Math.max(t.start_ms, piece.keepFrom * 1000);
+          const end = Math.min(t.end_ms, piece.keepTo * 1000);
+          if (end > start) merged.turns.push({ ...t, speaker: map.get(t.speaker)!, start_ms: start, end_ms: end });
+        }
+      } else {
+        previous = [];
       }
       if (res.diarization_error) warnings.push(`Speaker labelling failed: ${res.diarization_error}`);
+    }
+    merged.turns = renumberSpeakers(merged.turns);
+    if (opts.diarize && pieces.length > 1 && merged.turns.length) {
+      warnings.push(
+        `Long audio was transcribed in ${pieces.length} overlapping chunks and speakers were matched across them. ` +
+          'If one person shows up under two labels, give both the same name with name_speakers to merge them.'
+      );
     }
     merged.text = texts.filter(Boolean).join(' ');
     opts.onProgress?.(pieces.length, pieces.length, 'Transcribed');

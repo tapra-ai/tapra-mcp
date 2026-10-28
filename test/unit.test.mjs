@@ -49,7 +49,7 @@ test('word timestamps are regrouped into readable cues with speakers', () => {
   for (const c of cues) assert.ok(c.text.length <= 30, `cue too long: ${c.text}`);
   assert.equal(cues[0].speaker, 'S1');
   assert.equal(cues.at(-1).speaker, 'S2');
-  assert.match(toTxt(cues, ''), /^S1: kelma0/);
+  assert.match(toTxt(cues, ''), /^\[00:00\] S1: kelma0/);
 });
 
 test('long pauses split cues; segments are used when there are no words', () => {

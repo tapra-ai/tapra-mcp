@@ -16,29 +16,86 @@ function timestamp(seconds: number, sep: ',' | '.'): string {
   return `${pad(h)}:${pad(m)}:${pad(s)}${sep}${pad(ms % 1000, 3)}`;
 }
 
-function cueText(cue: Cue): string {
-  return cue.speaker ? `[${cue.speaker}] ${cue.text}` : cue.text;
+/** Speaker id -> shown name and color. Without it, cues show their raw speaker id. */
+export type CueStyle = Record<string, { name: string; color: string }>;
+
+function label(cue: Cue, style?: CueStyle): string | undefined {
+  return cue.speaker ? (style?.[cue.speaker]?.name ?? cue.speaker) : undefined;
 }
 
-export function toSrt(cues: Cue[]): string {
+/**
+ * Cue text with its speaker label. With a style (colors), the label is shown only
+ * when the speaker changes; the color tells the rest apart.
+ */
+function cueText(cue: Cue, style?: CueStyle, prev?: Cue): string {
+  const who = label(cue, style);
+  if (!who || (style && prev?.speaker === cue.speaker)) return cue.text;
+  return `[${who}] ${cue.text}`;
+}
+
+/** SRT. With a style, each cue is colored by speaker (<font>, which VLC, mpv and libass honor). */
+export function toSrt(cues: Cue[], style?: CueStyle): string {
   return cues
-    .map((c, i) => `${i + 1}\n${timestamp(c.start, ',')} --> ${timestamp(c.end, ',')}\n${cueText(c)}\n`)
+    .map((c, i) => {
+      const color = c.speaker ? style?.[c.speaker]?.color : undefined;
+      const body = cueText(c, style, cues[i - 1]);
+      const text = color ? `<font color="${color}">${body}</font>` : body;
+      return `${i + 1}\n${timestamp(c.start, ',')} --> ${timestamp(c.end, ',')}\n${text}\n`;
+    })
     .join('\n');
 }
 
-export function toVtt(cues: Cue[]): string {
-  return `WEBVTT\n\n${cues.map((c) => `${timestamp(c.start, '.')} --> ${timestamp(c.end, '.')}\n${cueText(c)}\n`).join('\n')}`;
+function vttVoice(name: string): string {
+  return name.replace(/[<>&"\n]/g, '').trim() || 'speaker';
 }
 
-export function toTxt(cues: Cue[], fallback: string): string {
-  if (!cues.some((c) => c.speaker)) return fallback;
-  const lines: string[] = [];
-  for (const c of cues) {
-    const last = lines.length - 1;
-    if (last >= 0 && lines[last]!.startsWith(`${c.speaker}:`)) lines[last] += ` ${c.text}`;
-    else lines.push(`${c.speaker}: ${c.text}`);
+/** WebVTT. With a style, cues carry <v Name> voice tags and a STYLE block colors each voice. */
+export function toVtt(cues: Cue[], style?: CueStyle): string {
+  let head = 'WEBVTT\n\n';
+  if (style && Object.keys(style).length) {
+    const rules = Object.values(style)
+      .map((s) => `::cue(v[voice="${vttVoice(s.name)}"]) { color: ${s.color}; }`)
+      .join('\n');
+    head += `STYLE\n${rules}\n\n`;
   }
-  return lines.join('\n\n');
+  const body = cues
+    .map((c, i) => {
+      const who = label(c, style);
+      const body = cueText(c, style, cues[i - 1]);
+      const text = style && who ? `<v ${vttVoice(who)}>${body}</v>` : body;
+      return `${timestamp(c.start, '.')} --> ${timestamp(c.end, '.')}\n${text}\n`;
+    })
+    .join('\n');
+  return head + body;
+}
+
+/**
+ * Plain text: one paragraph per speaker turn, each with its time, or the bare text
+ * with no speakers. Long turns are split at pauses so paragraphs stay readable.
+ */
+export function toTxt(cues: Cue[], fallback: string, style?: CueStyle): string {
+  if (!cues.some((c) => c.speaker)) return fallback;
+  const paras: { who: string; start: number; end: number; parts: string[]; chars: number }[] = [];
+  for (const c of cues) {
+    const who = label(c, style) ?? '?';
+    const last = paras.at(-1);
+    const pause = last ? c.start - last.end : 0;
+    if (last && last.who === who && !(last.chars > 500 && pause > 0.5) && last.chars < 1200) {
+      last.parts.push(c.text);
+      last.chars += c.text.length + 1;
+      last.end = c.end;
+    } else {
+      paras.push({ who, start: c.start, end: c.end, parts: [c.text], chars: c.text.length });
+    }
+  }
+  return paras.map((p) => `[${clockOf(p.start)}] ${p.who}: ${p.parts.join(' ')}`).join('\n\n');
+}
+
+function clockOf(seconds: number): string {
+  const s = Math.max(0, Math.round(seconds));
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const h = Math.floor(s / 3600);
+  return `${h ? `${h}:` : ''}${pad(Math.floor((s % 3600) / 60))}:${pad(s % 60)}`;
 }
 
 function parseTime(t: string): number {

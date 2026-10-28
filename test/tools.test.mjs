@@ -4,13 +4,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { after, before, describe, test } from 'node:test';
 import { ffmpeg, hasFfmpeg, makeFolders, startServer } from './helpers/harness.mjs';
-import { spawnSync } from 'node:child_process';
-
-function hasSubtitlesFilter() {
-  const bin = process.env.TAPRA_FFMPEG_PATH || 'ffmpeg';
-  const res = spawnSync(bin, ['-hide_banner', '-f', 'lavfi', '-i', 'nullsrc=s=16x16:d=0.04', '-vf', 'subtitles', '-f', 'null', '-'], { encoding: 'utf8' });
-  return !/No such filter/i.test(res.stderr ?? '');
-}
 import { sineWav, startMock } from './helpers/mock-api.mjs';
 
 let mock;
@@ -40,7 +33,7 @@ describe('discovery and free tools', () => {
   test('lists every tool with honest cost hints', async () => {
     const { tools } = await tapra.client.listTools();
     const byName = Object.fromEntries(tools.map((t) => [t.name, t]));
-    for (const name of ['tapra_status', 'list_voices', 'get_balance', 'speech_to_text', 'transcribe_video', 'diarize_audio', 'text_to_speech', 'create_voiceover', 'translate', 'list_translation_languages', 'convert_script']) {
+    for (const name of ['tapra_status', 'list_voices', 'get_balance', 'speech_to_text', 'transcribe_video', 'name_speakers', 'diarize_audio', 'text_to_speech', 'create_voiceover', 'translate', 'list_translation_languages', 'convert_script']) {
       assert.ok(byName[name], `missing tool ${name}`);
     }
     for (const paid of ['speech_to_text', 'text_to_speech', 'create_voiceover', 'translate', 'convert_script']) {
@@ -62,7 +55,7 @@ describe('discovery and free tools', () => {
     assert.equal(r.isError, false);
     assert.match(r.text, new RegExp(`API: ${mock.url.replace(/[.]/g, '\\.')} \\(from website\\)`));
     assert.match(r.text, /Balance: 9\.500 TND/);
-    assert.match(r.text, /Models: tapra-voice-v1, tapra-speak-v3/);
+    assert.match(r.text, /Models: tapra-scribe-v1, tapra-speak-v3/);
     assert.match(r.text, /Voices: amal, salma, salah, fahmi, leo \(cloning not available\)/);
   });
 
@@ -155,16 +148,49 @@ describe('speech', () => {
 });
 
 describe('transcription and text', () => {
-  test('speech_to_text saves an SRT with word-timed cues', { skip: !hasFfmpeg && 'needs ffmpeg' }, async () => {
-    const r = await tapra.call('speech_to_text', { input_path: 'clip.wav', format: 'srt', diarize: true, output_path: 'clip.srt' });
+  test('speech_to_text writes txt, srt, vtt and json in one call, with speakers', { skip: !hasFfmpeg && 'needs ffmpeg' }, async () => {
+    const r = await tapra.call('speech_to_text', { input_path: 'clip.wav', output_dir: 'clip' });
     assert.equal(r.isError, false, r.text);
     assert.match(r.text, /Transcribed 7\.0 s/);
-    const srt = fs.readFileSync(path.join(folders.output, 'clip.srt'), 'utf8');
+    const dir = path.join(folders.output, 'clip');
+    for (const ext of ['txt', 'srt', 'vtt', 'json']) assert.ok(fs.existsSync(path.join(dir, `clip.${ext}`)), ext);
+    const srt = fs.readFileSync(path.join(dir, 'clip.srt'), 'utf8');
     assert.match(srt, /^1\n00:00:00,000 --> /);
-    assert.match(srt, /\[S1\] 3aslema/);
+    assert.match(srt, /<font color="#F4AE52">\[S1\] 3aslema/);
+    assert.match(fs.readFileSync(path.join(dir, 'clip.vtt'), 'utf8'), /STYLE\n::cue\(v\[voice="S1"\]\)/);
+    assert.match(fs.readFileSync(path.join(dir, 'clip.txt'), 'utf8'), /^\[00:00\] S1: 3aslema/);
+    assert.match(r.text, /2 speakers detected:/);
+    assert.match(r.text, /S1, amber: .*sample samples.S1\.(mp3|wav)/);
+    assert.match(r.text, /NEXT STEP: .*name_speakers/);
+    assert.ok(fs.existsSync(path.join(dir, 'speakers.html')));
     const sent = mock.calls('/v1/audio/transcriptions').at(-1);
     assert.equal(sent.fields.timestamps, 'word');
     assert.equal(sent.fields.diarize, 'true');
+  });
+
+  test('name_speakers renames, recolors and merges', { skip: !hasFfmpeg && 'needs ffmpeg' }, async () => {
+    const r = await tapra.call('name_speakers', { transcript_path: 'clip', names: { S1: 'Riadh', S2: 'Host' }, colors: { Host: 'red' } });
+    assert.equal(r.isError, false, r.text);
+    const dir = path.join(folders.output, 'clip');
+    const srt = fs.readFileSync(path.join(dir, 'clip_named.srt'), 'utf8');
+    assert.match(srt, /<font color="#F4AE52">\[Riadh\] 3aslema/);
+    assert.match(srt, /<font color="#FF6B6B">\[Host\] /);
+    assert.match(fs.readFileSync(path.join(dir, 'clip_named.vtt'), 'utf8'), /<v Host>\[Host\]/);
+    const merged = await tapra.call('name_speakers', { transcript_path: path.join(dir, 'clip.json'), names: { S1: 'Same', S2: 'same' } });
+    assert.match(merged.text, /Merged: S2 into S1/);
+    assert.match(merged.text, /1 speaker detected/);
+    const bad = await tapra.call('name_speakers', { transcript_path: 'clip', names: { S9: 'x' } });
+    assert.equal(bad.isError, true);
+    assert.match(bad.text, /No speaker S9 .*Speakers: S1, S2/);
+  });
+
+  test('diarize false writes plain text without labels', { skip: !hasFfmpeg && 'needs ffmpeg' }, async () => {
+    const r = await tapra.call('speech_to_text', { input_path: 'clip.wav', diarize: false, formats: ['srt'], output_dir: 'plain' });
+    assert.equal(r.isError, false, r.text);
+    const files = fs.readdirSync(path.join(folders.output, 'plain')).sort();
+    assert.deepEqual(files, ['clip.json', 'clip.srt']);
+    assert.doesNotMatch(fs.readFileSync(path.join(folders.output, 'plain', 'clip.srt'), 'utf8'), /\[S1\]/);
+    assert.doesNotMatch(r.text, /speakers? detected/);
   });
 
   test('inputs outside the base folder are refused', async () => {
@@ -211,16 +237,12 @@ describe('video', { skip: !hasFfmpeg && 'needs ffmpeg' }, () => {
   });
 
   test('transcribe_video writes subtitles and a burned-in copy', async () => {
-    const r = await tapra.call('transcribe_video', { input_path: 'clip.mp4', burn_subtitles: true, output_path: 'clip_subs.srt', video_output_path: 'clip_subbed.mp4' });
+    const r = await tapra.call('transcribe_video', { input_path: 'clip.mp4', burn_subtitles: true, output_dir: 'vid' });
     assert.equal(r.isError, false, r.text);
-    if (hasSubtitlesFilter()) {
-      assert.ok(fs.statSync(path.join(folders.output, 'clip_subbed.mp4')).size > 1000);
-    } else {
-      // e.g. Homebrew's ffmpeg (no libass): subtitles still saved, burn-in explained.
-      assert.match(r.text, /no 'subtitles' filter/);
-      assert.ok(!fs.existsSync(path.join(folders.output, 'clip_subbed.mp4')));
-    }
-    assert.match(fs.readFileSync(path.join(folders.output, 'clip_subs.srt'), 'utf8'), /عسلامة/);
+    const dir = path.join(folders.output, 'vid');
+    assert.ok(fs.statSync(path.join(dir, 'clip_subtitled.mp4')).size > 1000);
+    assert.match(fs.readFileSync(path.join(dir, 'clip.srt'), 'utf8'), /عسلامة/);
+    assert.ok(fs.existsSync(path.join(dir, 'clip.vtt')) && fs.existsSync(path.join(dir, 'clip.txt')));
   });
 
   test('create_voiceover lays the narration onto the video', async () => {
@@ -231,10 +253,13 @@ describe('video', { skip: !hasFfmpeg && 'needs ffmpeg' }, () => {
 
   test('long audio is transcribed in chunks with continuous timestamps', async () => {
     ffmpeg(['-f', 'lavfi', '-i', 'sine=frequency=300:sample_rate=16000', '-t', '960', '-c:a', 'libmp3lame', '-b:a', '16k', path.join(folders.input, 'long.mp3')]);
-    const r = await tapra.call('speech_to_text', { input_path: 'long.mp3', format: 'json', output_path: 'long.json' });
+    const r = await tapra.call('speech_to_text', { input_path: 'long.mp3', output_dir: 'long' });
     assert.equal(r.isError, false, r.text);
     assert.match(r.text, /in 2 chunks/);
-    const json = JSON.parse(fs.readFileSync(path.join(folders.output, 'long.json'), 'utf8'));
+    assert.match(r.text, /2 speakers detected/, 'speakers are matched across chunks');
+    const json = JSON.parse(fs.readFileSync(path.join(folders.output, 'long', 'long.json'), 'utf8'));
+    const ends = json.segments.map((s) => s.end);
+    for (let i = 1; i < json.segments.length; i++) assert.ok(json.segments[i].start >= ends[i - 1] - 0.01, 'no duplicated overlap');
     assert.ok(json.segments.at(-1).start > 900, 'second chunk is offset');
     const starts = json.segments.map((s) => s.start);
     assert.deepEqual(starts, [...starts].sort((a, b) => a - b));

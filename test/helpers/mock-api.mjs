@@ -16,10 +16,10 @@ const PRICES = {
   topUpPackagesTnd: [10],
   ttsFlashMultiplier: 0.8,
   services: {
-    offline: price('tapra-voice-v1', 'audio_ms', 60000, 150000),
+    offline: price('tapra-scribe-v1', 'audio_ms', 60000, 150000),
     tts: price('tapra-speak-v3', 'characters', 1000, 200000),
     mt: price('tapra-translate-v1', 'characters', 1000, 150000),
-    converter: price('tapra-script-v1', 'characters', 1000, 100000)
+    converter: price('tapra-flip-v1', 'characters', 1000, 100000)
   }
 };
 
@@ -79,10 +79,10 @@ export async function startMock() {
       const denied = () => json({ error: { type: 'authentication_error', message: 'Missing, invalid, or revoked API key.' } }, 401);
       const authed = req.headers.authorization === `Bearer ${TEST_KEY}`;
       try {
-        if (url === '/health') return json({ ok: true, model: 'tapra-voice-v1' });
+        if (url === '/health') return json({ ok: true, model: 'tapra-scribe-v1' });
         if (url === '/api/pricing') return json(PRICES);
         if (url === '/api/openapi') return json({ openapi: '3.1.0', servers: [{ url: `http://127.0.0.1:${server.address().port}` }] });
-        if (url === '/v1/models') return json({ object: 'list', data: [{ id: 'tapra-voice-v1' }, { id: 'tapra-speak-v3' }] });
+        if (url === '/v1/models') return json({ object: 'list', data: [{ id: 'tapra-scribe-v1' }, { id: 'tapra-speak-v3' }] });
         if (url === '/api/v1/account') {
           if (!authed) return denied();
           return json({
@@ -115,7 +115,7 @@ export async function startMock() {
             language: 'aeb',
             duration: dur,
             processing_ms: 5,
-            model: 'tapra-voice-v1',
+            model: 'tapra-scribe-v1',
             segments,
             words: fields.timestamps === 'word' ? words : null,
             diarization,
@@ -159,7 +159,7 @@ export async function startMock() {
         if (url === '/v1/converters/transliterate') {
           const b = JSON.parse(body.toString());
           entry.json = b;
-          return json({ input: b.text, output: b.direction === 'ZI2AR' ? 'عسلامة' : '3aslema', direction: b.direction, model: 'tapra-script-v1', processing_ms: 2, usage: usage(0.003) });
+          return json({ input: b.text, output: b.direction === 'ZI2AR' ? 'عسلامة' : '3aslema', direction: b.direction, model: 'tapra-flip-v1', processing_ms: 2, usage: usage(0.003) });
         }
         json({ error: { type: 'not_found', message: url } }, 404);
       } catch (err) {

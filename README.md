@@ -51,8 +51,9 @@ claude mcp add tapra -e TAPRA_API_KEY=tapra_sk_live_… -- npx -y @tapra/mcp
 | `tapra_status` | API health, models, prices, balance, output folder, ffmpeg check | free |
 | `get_balance` | Balance, total spent, and the 10 latest charges for your key | free |
 | `list_voices` | The Tapra voices and what each sounds like | free |
-| `speech_to_text` | Transcribe audio or video to txt / srt / vtt / json, optional speaker labels | per minute |
-| `transcribe_video` | Subtitles for a video, readable cue lengths, optional burned-in MP4 | per minute |
+| `speech_to_text` | Transcribe audio or video: one folder with txt, srt and vtt (+ json), speakers detected and colored, a clip of each voice and a `speakers.html` report | per minute |
+| `transcribe_video` | Subtitles for a video (srt + vtt + txt in one call), readable cue lengths, speaker colors, optional burned-in MP4 | per minute |
+| `name_speakers` | Name the detected speakers (and pick colors); rewrites txt/srt/vtt, merges labels given the same name, can burn the result | free |
 | `diarize_audio` | Who spoke when, without a transcript | per minute |
 | `text_to_speech` | Speak Derja / Arabizi / French / English with a Tapra voice, effect tags, 19 formats | per character |
 | `create_voiceover` | Narration from a script, or dubbing from an SRT, on one timeline; writes the track, per-line clips and `manifest.json`; can lay it onto a video | per character |

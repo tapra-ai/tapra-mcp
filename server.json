@@ -3,7 +3,7 @@
   "name": "io.github.tapra-ai/tapra-mcp",
   "title": "Tapra",
   "description": "Tunisian Derja speech tools: transcribe and subtitle, Tapra voices and voiceovers, translation, Arabizi conversion.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "websiteUrl": "https://tapra.tn/mcp",
   "repository": {
     "url": "https://github.com/tapra-ai/tapra-mcp",
@@ -14,7 +14,7 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@tapra/mcp",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "runtimeHint": "npx",
       "transport": { "type": "stdio" },
       "environmentVariables": [

@@ -7,7 +7,8 @@ import { config, maskedKey, resolveInput, resolveOutput, resolveOutputDir } from
 import { decodeWav, encodeWav, extractWav16k, ffmpeg, hasFfmpeg, hasFfmpegFilter, makeTempDir, mixAt, probe, removeDir, requireFfmpeg, type MonoAudio } from './media.js';
 import { encodeAudio, extensionFor, formatSchema, needsFfmpeg, type AudioFormat } from './formats.js';
 import { inline, LOCAL_WRITE, maxCost, PAID, progressFrom, READ_ONLY, run, type Progress } from './toolkit.js';
-import { buildCues, parseSubtitles, splitScript, toSrt, toTxt, toVtt, type Cue } from './subtitles.js';
+import { buildCues, parseSubtitles, splitScript, toSrt, toTxt, toVtt, type Cue, type CueStyle } from './subtitles.js';
+import { clock, cutSamples, SPEAKER_COLORS, speakersHtml, speakerStats, type SpeakerInfo } from './speakers.js';
 import {
   checkBudget,
   client,
@@ -138,40 +139,196 @@ async function saveAudio(wav: Buffer, format: AudioFormat, out: string): Promise
 // Transcript output
 // ---------------------------------------------------------------------------
 
-type TranscriptFormat = 'txt' | 'srt' | 'vtt' | 'json';
+const TEXT_FORMATS = ['txt', 'srt', 'vtt'] as const;
+type TextFormat = (typeof TEXT_FORMATS)[number];
 
-function renderTranscript(t: MergedTranscript, format: TranscriptFormat, maxChars: number): { body: string; cues: Cue[] } {
-  const cues = buildCues(t.segments, t.words, t.turns.length ? t.turns : undefined, maxChars);
-  switch (format) {
-    case 'srt':
-      return { body: toSrt(cues), cues };
-    case 'vtt':
-      return { body: toVtt(cues), cues };
-    case 'json':
-      return {
-        body: JSON.stringify(
-          { text: t.text, language: t.language, duration: t.duration, segments: t.segments, words: t.words, speaker_turns: t.turns },
-          null,
-          2
-        ),
-        cues
-      };
-    default:
-      return { body: toTxt(cues, t.text), cues };
-  }
+const formatsSchema = z
+  .array(z.enum(TEXT_FORMATS))
+  .min(1)
+  .default([...TEXT_FORMATS])
+  .describe('Files to write. Default: all three (txt, srt, vtt). A .json with full timings is always written too.');
+
+const COLOR_WORDS: Record<string, string> = {
+  '#F4AE52': 'amber',
+  '#6EC6FF': 'sky blue',
+  '#8BE28B': 'green',
+  '#FF8FB1': 'pink',
+  '#C3A6FF': 'violet',
+  '#FFE066': 'yellow',
+  '#7FE0D4': 'teal',
+  '#FFB38A': 'peach',
+  '#B5C0D0': 'slate',
+  '#E9A0FF': 'orchid'
+};
+const NAMED_COLORS: Record<string, string> = {
+  ...Object.fromEntries(Object.entries(COLOR_WORDS).map(([hex, word]) => [word.replace(' ', ''), hex])),
+  red: '#FF6B6B',
+  orange: '#FF9F43',
+  blue: '#5DADE2',
+  purple: '#B388FF',
+  white: '#FFFFFF',
+  cyan: '#7FE0D4',
+  gold: '#FFD166'
+};
+
+function colorWord(hex: string): string {
+  return COLOR_WORDS[hex.toUpperCase()] ?? hex;
 }
 
-function transcriptSummary(t: MergedTranscript, savedTo: string | undefined, extra: string[] = []): string {
-  const lines = [
+function parseColor(value: string): string {
+  const v = value.trim().toLowerCase().replace(/\s+/g, '');
+  if (/^#[0-9a-f]{6}$/.test(v)) return v.toUpperCase();
+  if (/^#[0-9a-f]{3}$/.test(v)) return `#${[...v.slice(1)].map((c) => c + c).join('')}`.toUpperCase();
+  const named = NAMED_COLORS[v];
+  if (!named) throw new Error(`Unknown color "${value}". Use #RRGGBB or one of: ${Object.keys(NAMED_COLORS).join(', ')}.`);
+  return named;
+}
+
+/** What a transcript folder's .json holds, so name_speakers can redo the files later. */
+interface SavedTranscript {
+  source: string;
+  text: string;
+  language: string;
+  duration: number;
+  segments: Tapra.Segment[];
+  words: Tapra.Word[];
+  speaker_turns: Tapra.SpeakerTurn[];
+  speakers?: SpeakerInfo[];
+  max_chars_per_subtitle?: number;
+}
+
+interface Bundle {
+  dir: string;
+  files: string[];
+  lines: string[];
+  cues: Cue[];
+  style: CueStyle | undefined;
+  speakers: SpeakerInfo[];
+  preview: string;
+}
+
+/**
+ * Writes the transcript in every requested format plus a .json and, when
+ * speakers were labelled, a speaker page (speakers.html) with a clip of each voice.
+ */
+async function writeBundle(
+  data: SavedTranscript,
+  opts: { dir: string; stem: string; formats: readonly TextFormat[]; maxChars: number; style?: CueStyle; samplesFrom?: SpeakerInfo[] }
+): Promise<Bundle> {
+  const multi = new Set(data.speaker_turns.map((t) => t.speaker)).size > 1;
+  const cues = buildCues(data.segments, data.words, multi ? data.speaker_turns : undefined, opts.maxChars);
+  let speakers: SpeakerInfo[] = [];
+  let style: CueStyle | undefined;
+  if (data.speaker_turns.length) {
+    const order = [...new Set([...data.speaker_turns].sort((a, b) => a.start_ms - b.start_ms).map((t) => t.speaker))];
+    style = Object.fromEntries(
+      order.map((id, i) => [id, { name: opts.style?.[id]?.name ?? id, color: opts.style?.[id]?.color ?? SPEAKER_COLORS[i % SPEAKER_COLORS.length]! }])
+    );
+    // Stats need every cue's text, so build unlabelled cues when there is only one speaker.
+    speakers = speakerStats(data.speaker_turns, cues, style);
+  }
+
+  const files: string[] = [];
+  const write = (ext: string, body: string) => {
+    const file = resolveOutput(path.join(opts.dir, `${opts.stem}.${ext}`), opts.stem, ext);
+    fs.writeFileSync(file, body, 'utf8');
+    files.push(file);
+    return file;
+  };
+  const cueStyle = multi ? style : undefined;
+  for (const f of opts.formats) {
+    write(f, f === 'srt' ? toSrt(cues, cueStyle) : f === 'vtt' ? toVtt(cues, cueStyle) : toTxt(cues, data.text, cueStyle));
+  }
+
+  const lines: string[] = [];
+  if (speakers.length) {
+    if (opts.samplesFrom) {
+      const reuse = new Map(opts.samplesFrom.map((s) => [s.id, s.sample.file]));
+      for (const s of speakers) {
+        const file = reuse.get(s.id);
+        if (file && fs.existsSync(file)) s.sample.file = file;
+      }
+    } else if (fs.existsSync(data.source) && (await hasFfmpeg())) {
+      await cutSamples(data.source, speakers, path.join(opts.dir, 'samples'));
+    }
+    const page = resolveOutput(path.join(opts.dir, opts.samplesFrom ? 'speakers_named.html' : 'speakers.html'), 'speakers', 'html');
+    fs.writeFileSync(page, speakersHtml(path.basename(data.source), data.duration, speakers, data.speaker_turns, opts.dir), 'utf8');
+    files.push(page);
+    lines.push(`${speakers.length} speaker${speakers.length === 1 ? '' : 's'} detected:`);
+    for (const s of speakers) {
+      const sample = s.sample.file ? `, sample ${path.relative(opts.dir, s.sample.file)}` : '';
+      const quote = s.sample.text ? ` — "${s.sample.text.slice(0, 90)}${s.sample.text.length > 90 ? '…' : ''}"` : '';
+      lines.push(
+        `  ${s.name}${s.name !== s.id ? ` (${s.id})` : ''}, ${colorWord(s.color)}: ${clock(s.talk_seconds)} talking (${Math.round(s.share * 100)}%), ` +
+          `${s.turns} turn${s.turns === 1 ? '' : 's'}, first at ${clock(s.first_heard)}${sample}${quote}`
+      );
+      if (s.sample.file && !opts.samplesFrom) files.push(s.sample.file);
+    }
+    lines.push(`Speaker page: ${page} (timeline and a clip of each voice; open it in a browser).`);
+  }
+  write('json', JSON.stringify({ ...data, speakers, max_chars_per_subtitle: opts.maxChars }, null, 2));
+  return { dir: opts.dir, files, lines, cues, style: cueStyle, speakers, preview: toTxt(cues, data.text, cueStyle) };
+}
+
+function namingPrompt(b: Bundle, jsonPath: string): string[] {
+  if (b.speakers.length < 2) return [];
+  return [
+    '',
+    'NEXT STEP: tell the user how many speakers were found and ask whether to name them (they can listen to the ' +
+      'clips on the speaker page). Each name keeps its own subtitle color, and they may pick colors. ' +
+      `Then call name_speakers with transcript_path "${jsonPath}" and names like {"S1": "Host"}. ` +
+      'Giving two labels the same name merges them into one speaker. Naming is free.'
+  ];
+}
+
+function bundleSummary(t: MergedTranscript, b: Bundle, extra: string[] = []): string {
+  const json = b.files.find((f) => f.endsWith('.json'))!;
+  const shown = b.files.filter((f) => /\.(txt|srt|vtt)$/.test(f)).map((f) => path.basename(f));
+  return [
     `Transcribed ${t.duration.toFixed(1)} s (${t.language || 'auto'})${t.chunks > 1 ? ` in ${t.chunks} chunks` : ''}.`,
     t.spend.summary(),
-    ...(savedTo ? [`Saved to: ${savedTo}`] : []),
+    `Folder: ${b.dir}`,
+    `  ${shown.join(', ')} + ${path.basename(json)} (full timings, used by find_in_transcript and name_speakers)`,
     ...extra,
+    ...b.lines,
     ...t.warnings.map((w) => `Note: ${w}`),
+    ...namingPrompt(b, json),
     '',
-    inline(t.turns.length ? toTxt(buildCues(t.segments, t.words, t.turns, 84), t.text) : t.text)
-  ];
-  return lines.join('\n');
+    inline(b.preview)
+  ].join('\n');
+}
+
+function toSaved(source: string, t: MergedTranscript): SavedTranscript {
+  return { source, text: t.text, language: t.language, duration: t.duration, segments: t.segments, words: t.words, speaker_turns: t.turns };
+}
+
+/** Renders `video` with the bundle's subtitles drawn in (speaker colors kept). Returns a summary line. */
+async function burn(video: string, b: Bundle, dir: string, stem: string, font: string): Promise<string> {
+  if (!b.cues.length) return 'No speech found, so no subtitled video was made.';
+  const info = await probe(video);
+  if (!info.hasVideo) return 'The source has no picture, so no subtitled video was made.';
+  if (!(await hasFfmpegFilter('subtitles'))) {
+    return (
+      "No subtitled video: this ffmpeg has no 'subtitles' filter (it was built without libass). " +
+      'Install a full build (Homebrew: brew install ffmpeg-full; Windows: winget install Gyan.FFmpeg) ' +
+      'or set TAPRA_FFMPEG_PATH to one. The subtitle files above are ready to use.'
+    );
+  }
+  const videoOut = resolveOutput(path.join(dir, `${stem}_subtitled.mp4`), stem, 'mp4');
+  const tmp = makeTempDir('burn');
+  try {
+    // Run from the temp folder so the subtitles filter gets a bare file name (no path escaping).
+    fs.writeFileSync(path.join(tmp, 'subs.srt'), toSrt(b.cues, b.style), 'utf8');
+    const style = `FontName=${font.replace(/[',:\\]/g, '')},FontSize=18,Outline=1,Shadow=0,MarginV=24`;
+    await ffmpeg(
+      ['-i', video, '-vf', `subtitles=filename=subs.srt:force_style='${style}'`, '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-c:a', 'aac', '-b:a', '192k', videoOut],
+      tmp
+    );
+  } finally {
+    removeDir(tmp);
+  }
+  b.files.push(videoOut);
+  return `Subtitled video: ${videoOut}`;
 }
 
 function baseName(p: string): string {
@@ -295,16 +452,18 @@ export function registerTools(server: McpServer): void {
       title: 'Transcribe audio',
       description:
         'Transcribe an audio or video file with Tapra, which handles Tunisian Derja mixed with French and English. ' +
-        'Returns the transcript and saves it as txt, srt, vtt or json. Long files are split into chunks automatically. ' +
-        'Costs money per minute of audio.',
+        'One call writes a folder with the transcript as txt, srt and vtt (plus a .json with full timings). ' +
+        'Speakers are labelled by default (no extra charge): the result says how many were detected, with talk time, ' +
+        'a quote and an audio clip of each, and a speakers.html page. When there are several speakers, ask the user ' +
+        'whether to name them, then call name_speakers. Long files are split into chunks automatically. Costs money per minute of audio.',
       inputSchema: {
         input_path: z.string().describe('Path to the audio or video file.'),
-        format: z.enum(['txt', 'srt', 'vtt', 'json']).default('txt').describe('Saved file format.'),
-        diarize: z.boolean().default(false).describe('Label who speaks when (no extra charge).'),
+        formats: formatsSchema,
+        diarize: z.boolean().default(true).describe('Find who speaks when (no extra charge). Set false for a single speaker.'),
         language: z.string().optional().describe('Language hint. Usually leave unset: code-switching is auto-detected.'),
         prompt: z.string().optional().describe('Names, brands or jargon likely to appear, to help recognition.'),
-        output_path: z.string().optional().describe('Where to save. Relative paths go in the output folder.'),
-        save: z.boolean().default(true).describe('Save the transcript to a file.'),
+        max_chars_per_subtitle: z.number().int().min(20).max(200).default(84).describe('Longest subtitle line in srt/vtt, in characters.'),
+        output_dir: z.string().optional().describe('Folder to write into. Defaults to a new folder in the output folder.'),
         max_cost_tnd: maxCost
       },
       annotations: PAID
@@ -312,21 +471,18 @@ export function registerTools(server: McpServer): void {
     (args, extra) =>
       run(async () => {
         const input = resolveInput(args.input_path, 'media', { allowOutputs: true });
-        const wantsTiming = args.format === 'srt' || args.format === 'vtt' || args.format === 'json';
         const t = await transcribeMedia(input, {
           diarize: args.diarize,
           onProgress: progressFrom(extra),
-          wordTimestamps: wantsTiming,
+          wordTimestamps: true,
           ...(args.language ? { language: args.language } : {}),
           ...(args.prompt ? { prompt: args.prompt } : {}),
           ...(args.max_cost_tnd ? { maxCostTnd: args.max_cost_tnd } : {})
         });
-        let saved: string | undefined;
-        if (args.save) {
-          saved = resolveOutput(args.output_path, `${baseName(input)}_transcript`, args.format);
-          fs.writeFileSync(saved, renderTranscript(t, args.format, 84).body, 'utf8');
-        }
-        return { text: transcriptSummary(t, saved), files: saved ? [saved] : [] };
+        const stem = baseName(input);
+        const dir = resolveOutputDir(args.output_dir, `${stem}_transcript`);
+        const b = await writeBundle(toSaved(input, t), { dir, stem, formats: args.formats, maxChars: args.max_chars_per_subtitle });
+        return { text: bundleSummary(t, b), files: b.files };
       })
   );
 
@@ -335,22 +491,23 @@ export function registerTools(server: McpServer): void {
     {
       title: 'Transcribe video to subtitles',
       description:
-        'Make subtitles for a video: extracts the audio, transcribes Derja/French/English, and writes an SRT or VTT file timed for reading. ' +
+        'Make subtitles for a video: extracts the audio, transcribes Derja/French/English, and writes srt, vtt and txt in one go, ' +
+        'timed for reading. Speakers are labelled and colored by default (no extra charge), with a speaker report and a clip of each voice; ' +
+        'when there are several, ask the user whether to name them, then call name_speakers. ' +
         'Set burn_subtitles to also render a copy of the video with the subtitles drawn in. Needs ffmpeg. Costs money per minute.',
       inputSchema: {
         input_path: z.string().describe('Path to the video file (mp4, mov, mkv, webm...).'),
-        format: z.enum(['srt', 'vtt', 'txt', 'json']).default('srt'),
-        diarize: z.boolean().default(false).describe('Prefix each subtitle with its speaker.'),
+        formats: formatsSchema,
+        diarize: z.boolean().default(true).describe('Label and color each speaker (no extra charge). Set false for a single speaker.'),
         language: z.string().optional(),
         prompt: z.string().optional().describe('Names or jargon likely to appear.'),
         max_chars_per_subtitle: z.number().int().min(20).max(200).default(84).describe('Longest subtitle, in characters.'),
-        burn_subtitles: z.boolean().default(false).describe('Also render an MP4 with the subtitles drawn on the picture.'),
+        burn_subtitles: z.boolean().default(false).describe('Also render an MP4 with the subtitles drawn on the picture (speaker colors kept).'),
         subtitle_font: z
           .string()
           .default('Tahoma')
           .describe('Font for burned subtitles. Must support Arabic; Tahoma and Segoe UI do (Arial drops the لا ligature).'),
-        output_path: z.string().optional().describe('Where to save the subtitle file.'),
-        video_output_path: z.string().optional().describe('Where to save the subtitled video (with burn_subtitles).'),
+        output_dir: z.string().optional().describe('Folder to write into. Defaults to a new folder in the output folder.'),
         max_cost_tnd: maxCost
       },
       annotations: PAID
@@ -369,40 +526,93 @@ export function registerTools(server: McpServer): void {
           ...(args.prompt ? { prompt: args.prompt } : {}),
           ...(args.max_cost_tnd ? { maxCostTnd: args.max_cost_tnd } : {})
         });
-        const name = baseName(input);
-        const subtitlePath = resolveOutput(args.output_path, `${name}_subtitles`, args.format);
-        const rendered = renderTranscript(t, args.format, args.max_chars_per_subtitle);
-        fs.writeFileSync(subtitlePath, rendered.body, 'utf8');
-        const notes = [`Subtitles: ${rendered.cues.length} cues.`];
-        const files = [subtitlePath];
+        const stem = baseName(input);
+        const dir = resolveOutputDir(args.output_dir, `${stem}_subtitles`);
+        const b = await writeBundle(toSaved(input, t), { dir, stem, formats: args.formats, maxChars: args.max_chars_per_subtitle });
+        const notes = [`Subtitles: ${b.cues.length} cues.`];
+        if (args.burn_subtitles) notes.push(await burn(input, b, dir, stem, args.subtitle_font));
+        return { text: bundleSummary(t, b, notes), files: b.files };
+      })
+  );
 
-        if (args.burn_subtitles && !rendered.cues.length) {
-          notes.push('No speech found, so no subtitled video was made.');
-        } else if (args.burn_subtitles && !(await hasFfmpegFilter('subtitles'))) {
-          notes.push(
-            "No subtitled video: this ffmpeg has no 'subtitles' filter (it was built without libass). " +
-              'Install a full build (Homebrew: brew install ffmpeg-full; Windows: winget install Gyan.FFmpeg) ' +
-              'or set TAPRA_FFMPEG_PATH to one. The subtitle file above is ready to use.'
-          );
-        } else if (args.burn_subtitles) {
-          const videoOut = resolveOutput(args.video_output_path, `${name}_subtitled`, 'mp4');
-          const tmp = makeTempDir('burn');
-          try {
-            // Run from the temp folder so the subtitles filter gets a bare file name (no path escaping).
-            fs.writeFileSync(path.join(tmp, 'subs.srt'), toSrt(rendered.cues), 'utf8');
-            const font = args.subtitle_font.replace(/[',:\\]/g, '');
-            const style = `FontName=${font},FontSize=18,Outline=1,Shadow=0,MarginV=24`;
-            await ffmpeg(
-              ['-i', input, '-vf', `subtitles=filename=subs.srt:force_style='${style}'`, '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-c:a', 'aac', '-b:a', '192k', videoOut],
-              tmp
-            );
-          } finally {
-            removeDir(tmp);
-          }
-          notes.push(`Subtitled video: ${videoOut}`);
-          files.push(videoOut);
+  server.registerTool(
+    'name_speakers',
+    {
+      title: 'Name speakers',
+      description:
+        'Give the speakers found by speech_to_text or transcribe_video real names (and optionally colors), then rewrite the ' +
+        'txt, srt and vtt with those names. Each speaker keeps one subtitle color (srt <font> colors, vtt voice styles). ' +
+        'Labels given the same name are merged into one speaker. Free, works offline. Can also burn the named subtitles into the video.',
+      inputSchema: {
+        transcript_path: z.string().describe('The .json from the transcript folder (or the folder itself).'),
+        names: z
+          .record(z.string(), z.string().min(1).max(60))
+          .describe('Speaker label to name, e.g. {"S1": "Riadh", "S2": "Host"}. Unlisted speakers keep their label.'),
+        colors: z
+          .record(z.string(), z.string())
+          .optional()
+          .describe('Optional label or name to color: #RRGGBB or a word (amber, skyblue, green, pink, violet, yellow, teal, peach, red, orange, blue, purple, white, gold).'),
+        formats: formatsSchema,
+        burn_subtitles: z.boolean().default(false).describe('Also render the source video with the named, colored subtitles drawn in.'),
+        subtitle_font: z.string().default('Tahoma')
+      },
+      annotations: LOCAL_WRITE
+    },
+    (args) =>
+      run(async () => {
+        let jsonPath = args.transcript_path;
+        const asDir = path.resolve(config.outputDir, jsonPath);
+        if (fs.existsSync(asDir) && fs.statSync(asDir).isDirectory()) {
+          const found = fs
+            .readdirSync(asDir)
+            .filter((f) => f.endsWith('.json') && !f.includes('_named'))
+            .sort();
+          if (!found.length) throw new Error(`No transcript .json in ${asDir}.`);
+          jsonPath = path.join(asDir, found[0]!);
         }
-        return { text: transcriptSummary(t, subtitlePath, notes), files };
+        const file = resolveInput(jsonPath, 'transcript', { allowOutputs: true });
+        if (path.extname(file).toLowerCase() !== '.json') throw new Error('Give the .json from the transcript folder.');
+        const data = JSON.parse(fs.readFileSync(file, 'utf8')) as SavedTranscript;
+        if (!data.speaker_turns?.length) throw new Error('This transcript has no speaker labels. Transcribe again with diarize: true.');
+        const ids = [...new Set([...data.speaker_turns].sort((a, b) => a.start_ms - b.start_ms).map((t) => t.speaker))];
+        const unknown = Object.keys(args.names).filter((k) => !ids.includes(k));
+        if (unknown.length) throw new Error(`No speaker ${unknown.join(', ')} in this transcript. Speakers: ${ids.join(', ')}.`);
+
+        // Same name means one speaker: later labels fold into the first one with that name.
+        const mergedInto = new Map<string, string>();
+        const owner = new Map<string, string>();
+        for (const id of ids) {
+          const key = args.names[id]?.trim().toLowerCase();
+          if (!key) continue;
+          if (owner.has(key)) mergedInto.set(id, owner.get(key)!);
+          else owner.set(key, id);
+        }
+        const turns = data.speaker_turns.map((t) => ({ ...t, speaker: mergedInto.get(t.speaker) ?? t.speaker }));
+        const before = new Map((data.speakers ?? []).map((s) => [s.id, s.color]));
+        const style: CueStyle = {};
+        for (const [i, id] of ids.filter((id) => !mergedInto.has(id)).entries()) {
+          const name = args.names[id]?.trim() || id;
+          const pick = args.colors?.[id] ?? args.colors?.[name];
+          style[id] = { name, color: pick ? parseColor(pick) : (before.get(id) ?? SPEAKER_COLORS[i % SPEAKER_COLORS.length]!) };
+        }
+
+        const dir = path.dirname(file);
+        const stem = `${path.basename(file, '.json')}_named`;
+        const b = await writeBundle(
+          { ...data, speaker_turns: turns },
+          { dir, stem, formats: args.formats, maxChars: data.max_chars_per_subtitle ?? 84, style, samplesFrom: data.speakers ?? [] }
+        );
+        const notes = mergedInto.size ? [`Merged: ${[...mergedInto].map(([a, into]) => `${a} into ${into}`).join(', ')}.`] : [];
+        if (args.burn_subtitles) {
+          await requireFfmpeg('Burning subtitles');
+          if (!fs.existsSync(data.source)) throw new Error(`The source video is gone: ${data.source}.`);
+          notes.push(await burn(data.source, b, dir, stem, args.subtitle_font));
+        }
+        const shown = b.files.filter((f) => /\.(txt|srt|vtt)$/.test(f)).map((f) => path.basename(f));
+        return {
+          text: [`Named subtitles in ${dir}:`, `  ${shown.join(', ')}`, ...notes, ...b.lines, '', inline(b.preview)].join('\n'),
+          files: b.files
+        };
       })
   );
 
