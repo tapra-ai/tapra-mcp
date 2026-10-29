@@ -62,7 +62,7 @@ describe('discovery and free tools', () => {
     assert.equal(r.isError, false);
     assert.match(r.text, new RegExp(`API: ${mock.url.replace(/[.]/g, '\\.')} \\(from website\\)`));
     assert.match(r.text, /Balance: 9\.500 TND/);
-    assert.match(r.text, /Models: tapra-scribe-v1, tapra-speak-v3/);
+    assert.match(r.text, /Models: tapra-scribe-v1, tapra-speak-v1/);
     assert.match(r.text, /Voices: amal, salma, salah, fahmi, leo \(cloning not available\)/);
   });
 
@@ -92,7 +92,7 @@ describe('speech', () => {
     assert.match(r.text, /Voice: Salma \(full quality\)/);
     const sent = mock.calls('/v1/audio/speech').at(-1);
     assert.equal(sent.fields.voice, 'salma');
-    assert.equal(sent.fields.model, 'tapra-speak-v3');
+    assert.equal(sent.fields.model, 'tapra-speak-v1');
     assert.equal(sent.fields.instruct, 'Female, Young Adult, Moderate Pitch');
     assert.equal(sent.fields.convert_arabizi, 'true');
     assert.ok(sent.idempotencyKey, 'paid calls carry an Idempotency-Key');
@@ -104,7 +104,7 @@ describe('speech', () => {
     await tapra.call('text_to_speech', { text: 'Ahla' });
     assert.equal(mock.calls('/v1/audio/speech').at(-1).fields.voice, 'leo');
     await tapra.call('text_to_speech', { text: 'Ahla', voice: 'fahmi', quality: 'flash' });
-    assert.equal(mock.calls('/v1/audio/speech').at(-1).fields.model, 'tapra-speak-flash');
+    assert.equal(mock.calls('/v1/audio/speech').at(-1).fields.model, 'tapra-speak-flash-v1');
   });
 
   test('unknown voices are rejected before any charge', async () => {
