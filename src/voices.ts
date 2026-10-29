@@ -1,5 +1,5 @@
 /**
- * The Tapra voices offered through the MCP server. They are tapra-speak-v3 speakers
+ * The Tapra voices offered through the MCP server. They are tapra-speak-v1 speakers
  * (the same ones as Voice Studio, see src/features/voice-studio/voices.ts); `instruct`
  * is the style hint Voice Studio sends with each one.
  */
@@ -70,7 +70,7 @@ export function voiceMenu(): string {
 }
 
 /** Speech models: full quality, or Flash (same voices, about 5x faster, cheaper). */
-export const SPEECH_MODELS = { full: 'tapra-speak-v3', flash: 'tapra-speak-flash' } as const;
+export const SPEECH_MODELS = { full: 'tapra-speak-v1', flash: 'tapra-speak-flash-v1' } as const;
 
 /**
  * Non-verbal effect tags Tapra-Speak understands (same list as Voice Studio,

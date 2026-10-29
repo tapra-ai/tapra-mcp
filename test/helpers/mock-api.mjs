@@ -17,7 +17,7 @@ const PRICES = {
   ttsFlashMultiplier: 0.8,
   services: {
     offline: price('tapra-scribe-v1', 'audio_ms', 60000, 150000),
-    tts: price('tapra-speak-v3', 'characters', 1000, 200000),
+    tts: price('tapra-speak-v1', 'characters', 1000, 200000),
     mt: price('tapra-translate-v1', 'characters', 1000, 150000),
     converter: price('tapra-flip-v1', 'characters', 1000, 100000)
   }
@@ -82,7 +82,7 @@ export async function startMock() {
         if (url === '/health') return json({ ok: true, model: 'tapra-scribe-v1' });
         if (url === '/api/pricing') return json(PRICES);
         if (url === '/api/openapi') return json({ openapi: '3.1.0', servers: [{ url: `http://127.0.0.1:${server.address().port}` }] });
-        if (url === '/v1/models') return json({ object: 'list', data: [{ id: 'tapra-scribe-v1' }, { id: 'tapra-speak-v3' }] });
+        if (url === '/v1/models') return json({ object: 'list', data: [{ id: 'tapra-scribe-v1' }, { id: 'tapra-speak-v1' }] });
         if (url === '/api/v1/account') {
           if (!authed) return denied();
           return json({
