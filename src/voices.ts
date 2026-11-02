@@ -30,7 +30,7 @@ export const VOICES: readonly TapraVoice[] = [
     id: 'salah',
     name: 'Salah',
     gender: 'male',
-    description: 'Man with a big, sharp (aigu) voice that carries. Strong presence.',
+    description: 'Man with a big, sharp (aigu) voice that carries. Strong presence. The default Tapra voice.',
     instruct: 'Male, Elderly, Very Low Pitch'
   },
   {
@@ -44,12 +44,12 @@ export const VOICES: readonly TapraVoice[] = [
     id: 'leo',
     name: 'Leo',
     gender: 'male',
-    description: 'Young man. Light and energetic. The default Tapra voice.',
+    description: 'Young man. Light and energetic.',
     instruct: ''
   }
 ];
 
-export const DEFAULT_VOICE_ID = 'leo';
+export const DEFAULT_VOICE_ID = 'salah';
 
 export const VOICE_IDS = VOICES.map((v) => v.id) as [string, ...string[]];
 
