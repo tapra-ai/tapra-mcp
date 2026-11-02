@@ -41,6 +41,14 @@ import {
 // Speech synthesis shared by text_to_speech and create_voiceover
 // ---------------------------------------------------------------------------
 
+/** Agents default to Arabizi unless told otherwise; the voice model reads Arabic-script Derja best. */
+const DERJA_SCRIPT_HINT =
+  'Write Derja in Arabic script, with French and English words in Latin letters as they are spelled ' +
+  '(e.g. "مرحبا بيكم في صفاقس, la capitale du Sud, trop beau, just wow"). The voice model reads this best. ' +
+  'Do not write Derja in Arabizi (Latin letters and digits like "3aslema"): it is converted automatically first, ' +
+  'and that conversion can misspell words. Pass Arabizi only when the user gives you Arabizi text. ' +
+  'Use the same Arabic-script text for any subtitles. '
+
 const voiceShape = {
   voice: z
     .enum(VOICE_IDS)
@@ -54,7 +62,10 @@ const voiceShape = {
   convert_arabizi: z
     .boolean()
     .default(true)
-    .describe('Convert Arabizi (e.g. "3aslema") to Arabic script before speaking, as Voice Studio does.')
+    .describe(
+      'Safety net for Arabizi input (e.g. "3aslema"): converts it to Arabic script before speaking. ' +
+        'Write Derja in Arabic script yourself instead; the automatic conversion can misspell words.'
+    )
 };
 
 type VoiceArgs = {
@@ -670,14 +681,19 @@ export function registerTools(server: McpServer): void {
     {
       title: 'Text to speech',
       description:
-        'Speak text in Tunisian Derja (Arabic script or Arabizi), French, English, or a mix with one of the Tapra voices, ' +
+        'Speak text in Tunisian Derja, French, English, or a mix with one of the Tapra voices, ' +
         `with Tunisian pronunciation. Voices: ${voiceMenu()}. ` +
-        `Add non-verbal effects inline with tags (not billed): ${effectsMenu()}. Example: "[euh] ma na3rafch, [breath] khalli nchouf". ` +
+        DERJA_SCRIPT_HINT +
+        `Add non-verbal effects inline with tags (not billed): ${effectsMenu()}. Example: "[euh] ما نعرفش, [breath] خلّي نشوف". ` +
         'Saves the audio in the chosen format (wav by default, 18 other formats). ' +
         'Voice cloning and custom voice design are not currently available: if the user asks to clone a voice, say so ' +
         'and offer these voices. Costs money per character. For long scripts or narration timed to a video, use create_voiceover.',
       inputSchema: {
-        text: z.string().min(1).max(2000).describe('What to say. May include effect tags like [euh], [hmm], [breath].'),
+        text: z
+          .string()
+          .min(1)
+          .max(2000)
+          .describe('What to say: Derja in Arabic script, French/English in Latin letters. May include effect tags like [euh], [hmm], [breath].'),
         ...voiceShape,
         duration_seconds: z.number().min(0.2).max(120).optional().describe('Force the clip to last this long.'),
         format: formatSchema,
@@ -718,6 +734,7 @@ export function registerTools(server: McpServer): void {
         'Turn a script or a subtitle file into one narration track for video work. Each line is spoken with the same Tapra voice ' +
         `(${voiceMenu()}; voice cloning is not available) and ` +
         'placed on a timeline: at its subtitle time (from srt_path) or one after another (from script or lines). ' +
+        DERJA_SCRIPT_HINT +
         `Lines may use effect tags (${EFFECT_TAGS}). ` +
         'Writes a folder with the voiceover track (wav or another format), one WAV clip per line, and manifest.json ' +
         '(text + start/end per clip) that video generation tools can follow. Optionally lays the voiceover onto a video. ' +
