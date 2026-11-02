@@ -72,7 +72,7 @@ describe('discovery and free tools', () => {
     assert.match(r.text, /Salma .*Younger woman/);
     assert.match(r.text, /Salah .*big/);
     assert.match(r.text, /Fahmi .*Middle-aged man/);
-    assert.match(r.text, /Leo .*default.*Young man/);
+    assert.match(r.text, /Salah .*default.*Man with a big/);
     assert.match(r.text, /Voice cloning is not currently available/);
   });
 
@@ -100,9 +100,9 @@ describe('speech', () => {
     assert.equal(fs.readFileSync(path.join(folders.output, 'hello.wav')).toString('ascii', 0, 4), 'RIFF');
   });
 
-  test('defaults to Leo; flash quality uses the flash model', async () => {
+  test('defaults to Salah; flash quality uses the flash model', async () => {
     await tapra.call('text_to_speech', { text: 'Ahla' });
-    assert.equal(mock.calls('/v1/audio/speech').at(-1).fields.voice, 'leo');
+    assert.equal(mock.calls('/v1/audio/speech').at(-1).fields.voice, 'salah');
     await tapra.call('text_to_speech', { text: 'Ahla', voice: 'fahmi', quality: 'flash' });
     assert.equal(mock.calls('/v1/audio/speech').at(-1).fields.model, 'tapra-speak-flash-v1');
   });

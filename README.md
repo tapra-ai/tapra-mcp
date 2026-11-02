@@ -79,9 +79,9 @@ Example prompts:
 |---|---|
 | `amal` | Mature woman. Warm, grounded, everyday Tunisian. |
 | `salma` | Younger woman. Lighter and brighter, conversational. |
-| `salah` | Man with a big, sharp (aigu) voice that carries. |
+| `salah` | Man with a big, sharp (aigu) voice that carries. The default. |
 | `fahmi` | Middle-aged man. Normal, natural male voice. |
-| `leo` | Young man. Light and energetic. The default. |
+| `leo` | Young man. Light and energetic. |
 
 Speech is always pronounced the Tunisian way (loanwords and Arabizi). Effect tags go inline
 and are not billed: `[euh]` hesitation, `[aaa]` long filler, `[hmm]`, `[ahem]` throat clear,
