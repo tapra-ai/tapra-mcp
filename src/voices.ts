@@ -13,43 +13,85 @@ export interface TapraVoice {
 
 export const VOICES: readonly TapraVoice[] = [
   {
-    id: 'amal',
-    name: 'Amal',
+    id: 'youssef',
+    name: 'Youssef',
+    gender: 'male',
+    description: 'Man. The default Tapra voice.',
+    instruct: 'Male, Young Adult, Moderate Pitch'
+  },
+  {
+    id: 'zeineb',
+    name: 'Zeineb',
     gender: 'female',
-    description: 'Mature woman. Warm, grounded, everyday Tunisian.',
+    description: 'Woman. A warm storyteller, made for narration.',
     instruct: ''
   },
   {
-    id: 'salma',
-    name: 'Salma',
-    gender: 'female',
-    description: 'Younger woman. Lighter and brighter, conversational.',
-    instruct: 'Female, Young Adult, Moderate Pitch'
-  },
-  {
-    id: 'salah',
-    name: 'Salah',
+    id: 'karim',
+    name: 'Karim',
     gender: 'male',
-    description: 'Man with a big, sharp (aigu) voice that carries. Strong presence. The default Tapra voice.',
+    description: 'Man. Calm.',
     instruct: 'Male, Elderly, Very Low Pitch'
   },
   {
-    id: 'fahmi',
-    name: 'Fahmi',
+    id: 'sarra',
+    name: 'Sarra',
+    gender: 'female',
+    description: 'Woman. Clear.',
+    instruct: 'Female, Young Adult, Moderate Pitch'
+  },
+  {
+    id: 'anis',
+    name: 'Anis',
     gender: 'male',
-    description: 'Middle-aged man. Normal, natural male voice.',
+    description: 'Man. Clear.',
     instruct: 'Male, Young Adult, Low Pitch'
   },
   {
-    id: 'leo',
-    name: 'Leo',
+    id: 'rim',
+    name: 'Rim',
+    gender: 'female',
+    description: 'Woman.',
+    instruct: 'Female, Young Adult, High Pitch'
+  },
+  {
+    id: 'hamza',
+    name: 'Hamza',
     gender: 'male',
-    description: 'Young man. Light and energetic.',
+    description: 'Man.',
+    instruct: ''
+  },
+  {
+    id: 'mariem',
+    name: 'Mariem',
+    gender: 'female',
+    description: 'Woman.',
+    instruct: 'Female, Middle-aged, Low Pitch'
+  },
+  {
+    id: 'mehdi',
+    name: 'Mehdi',
+    gender: 'male',
+    description: 'Man.',
+    instruct: ''
+  },
+  {
+    id: 'ines',
+    name: 'Ines',
+    gender: 'female',
+    description: 'Woman.',
+    instruct: ''
+  },
+  {
+    id: 'walid',
+    name: 'Walid',
+    gender: 'male',
+    description: 'Man.',
     instruct: ''
   }
 ];
 
-export const DEFAULT_VOICE_ID = 'salah';
+export const DEFAULT_VOICE_ID = 'youssef';
 
 export const VOICE_IDS = VOICES.map((v) => v.id) as [string, ...string[]];
 

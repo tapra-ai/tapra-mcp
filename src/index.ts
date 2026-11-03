@@ -9,10 +9,11 @@ import { registerTools } from './tools.js';
 import { voiceMenu } from './voices.js';
 
 const server = new McpServer(
-  { name: 'tapra', title: 'Tapra', version: '0.1.3' },
+  { name: 'tapra', title: 'Tapra', version: '0.1.5' },
   {
     instructions:
       'Tapra speech and language tools for Tunisian Derja code-switched with French and English. ' +
+      'When writing text to speak, write Derja in Arabic script and French/English in Latin letters, not Arabizi. ' +
       'Paid tools spend the user\'s Tapra balance (TND) and report cost and remaining balance. ' +
       `Input files must be inside ${config.basePath} (relative paths resolve there). ` +
       (config.outputMode === 'resources'

@@ -69,19 +69,25 @@ Example prompts:
 
 - "Subtitle ~/Videos/interview.mp4 with speaker labels and burn them in."
 - "Write a 30-second Derja ad for a coffee shop, then make a voiceover with a warm female voice."
-- "Narrate this script with Salma, then lay it onto ~/Videos/promo.mp4."
-- "Subtitle interview.mp4, translate the subtitles to French, and dub it with Fahmi."
+- "Narrate this script with Zeineb, then lay it onto ~/Videos/promo.mp4."
+- "Subtitle interview.mp4, translate the subtitles to French, and dub it with Karim."
 - "Where does she say 'el budget' in interview.json? Cut 5 seconds around it and normalize to -14 LUFS."
 
 ### Voices
 
 | Voice | Sounds like |
 |---|---|
-| `amal` | Mature woman. Warm, grounded, everyday Tunisian. |
-| `salma` | Younger woman. Lighter and brighter, conversational. |
-| `salah` | Man with a big, sharp (aigu) voice that carries. The default. |
-| `fahmi` | Middle-aged man. Normal, natural male voice. |
-| `leo` | Young man. Light and energetic. |
+| `youssef` | Man. The default. |
+| `zeineb` | Woman. A warm storyteller, made for narration. |
+| `karim` | Man. Calm. |
+| `sarra` | Woman. Clear. |
+| `anis` | Man. Clear. |
+| `rim` | Woman. |
+| `hamza` | Man. |
+| `mariem` | Woman. |
+| `mehdi` | Man. |
+| `ines` | Woman. |
+| `walid` | Man. |
 
 Speech is always pronounced the Tunisian way (loanwords and Arabizi). Effect tags go inline
 and are not billed: `[euh]` hesitation, `[aaa]` long filler, `[hmm]`, `[ahem]` throat clear,

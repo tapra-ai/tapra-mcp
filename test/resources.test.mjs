@@ -21,7 +21,7 @@ after(async () => {
 test('resources mode returns audio inline and writes nothing to the output folder', async () => {
   const tapra = await startServer(mock, folders, { TAPRA_MCP_OUTPUT_MODE: 'resources' });
   try {
-    const r = await tapra.call('text_to_speech', { text: 'Ahla bikom', voice: 'leo' });
+    const r = await tapra.call('text_to_speech', { text: 'Ahla bikom', voice: 'anis' });
     assert.equal(r.isError, false, r.text);
     const res = r.content.find((c) => c.type === 'resource');
     assert.ok(res, 'audio comes back as an embedded resource');
