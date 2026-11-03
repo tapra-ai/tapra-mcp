@@ -48,7 +48,7 @@ describe('discovery and free tools', () => {
     }
     for (const free of ['tapra_status', 'list_voices', 'get_balance']) assert.equal(byName[free].annotations.readOnlyHint, true);
     const tts = byName.text_to_speech;
-    assert.deepEqual(tts.inputSchema.properties.voice.enum, ['amal', 'salma', 'salah', 'fahmi', 'leo']);
+    assert.deepEqual(tts.inputSchema.properties.voice.enum, ['youssef', 'zeineb', 'karim', 'sarra', 'anis', 'rim', 'hamza', 'mariem', 'mehdi', 'ines', 'walid']);
     assert.ok(!('voice_reference_path' in tts.inputSchema.properties), 'cloning input must be gone');
     assert.match(tts.description, /cloning .* not currently available/i);
   });
@@ -63,16 +63,16 @@ describe('discovery and free tools', () => {
     assert.match(r.text, new RegExp(`API: ${mock.url.replace(/[.]/g, '\\.')} \\(from website\\)`));
     assert.match(r.text, /Balance: 9\.500 TND/);
     assert.match(r.text, /Models: tapra-scribe-v1, tapra-speak-v1/);
-    assert.match(r.text, /Voices: amal, salma, salah, fahmi, leo \(cloning not available\)/);
+    assert.match(r.text, /Voices: youssef, zeineb, karim, sarra, anis, rim, hamza, mariem, mehdi, ines, walid \(cloning not available\)/);
   });
 
   test('list_voices describes each voice and refuses cloning', async () => {
     const r = await tapra.call('list_voices');
-    assert.match(r.text, /Amal .*Mature woman/);
-    assert.match(r.text, /Salma .*Younger woman/);
-    assert.match(r.text, /Salah .*big/);
-    assert.match(r.text, /Fahmi .*Middle-aged man/);
-    assert.match(r.text, /Salah .*default.*Man with a big/);
+    assert.match(r.text, /Zeineb .*female.*storyteller/);
+    assert.match(r.text, /Sarra .*female.*Clear/);
+    assert.match(r.text, /Karim .*male.*Calm/);
+    assert.match(r.text, /Walid \(voice: "walid", male\)/);
+    assert.match(r.text, /Youssef .*default.*Man/);
     assert.match(r.text, /Voice cloning is not currently available/);
   });
 
@@ -87,11 +87,11 @@ describe('discovery and free tools', () => {
 
 describe('speech', () => {
   test('text_to_speech sends the named voice, v3 model and its style hint', async () => {
-    const r = await tapra.call('text_to_speech', { text: '3aslema, chna7welek?', voice: 'salma', output_path: 'hello.wav' });
+    const r = await tapra.call('text_to_speech', { text: '3aslema, chna7welek?', voice: 'sarra', output_path: 'hello.wav' });
     assert.equal(r.isError, false, r.text);
-    assert.match(r.text, /Voice: Salma \(full quality\)/);
+    assert.match(r.text, /Voice: Sarra \(full quality\)/);
     const sent = mock.calls('/v1/audio/speech').at(-1);
-    assert.equal(sent.fields.voice, 'salma');
+    assert.equal(sent.fields.voice, 'sarra');
     assert.equal(sent.fields.model, 'tapra-speak-v1');
     assert.equal(sent.fields.instruct, 'Female, Young Adult, Moderate Pitch');
     assert.equal(sent.fields.convert_arabizi, 'true');
@@ -100,10 +100,10 @@ describe('speech', () => {
     assert.equal(fs.readFileSync(path.join(folders.output, 'hello.wav')).toString('ascii', 0, 4), 'RIFF');
   });
 
-  test('defaults to Salah; flash quality uses the flash model', async () => {
+  test('defaults to Youssef; flash quality uses the flash model', async () => {
     await tapra.call('text_to_speech', { text: 'Ahla' });
-    assert.equal(mock.calls('/v1/audio/speech').at(-1).fields.voice, 'salah');
-    await tapra.call('text_to_speech', { text: 'Ahla', voice: 'fahmi', quality: 'flash' });
+    assert.equal(mock.calls('/v1/audio/speech').at(-1).fields.voice, 'youssef');
+    await tapra.call('text_to_speech', { text: 'Ahla', voice: 'karim', quality: 'flash' });
     assert.equal(mock.calls('/v1/audio/speech').at(-1).fields.model, 'tapra-speak-flash-v1');
   });
 
@@ -128,19 +128,19 @@ describe('speech', () => {
   });
 
   test('create_voiceover from lines writes audio, clips and a manifest', async () => {
-    const r = await tapra.call('create_voiceover', { lines: ['Ahla bikom.', 'Lyoum bech nwarriwkom.'], voice: 'amal', output_dir: 'vo' });
+    const r = await tapra.call('create_voiceover', { lines: ['Ahla bikom.', 'Lyoum bech nwarriwkom.'], voice: 'zeineb', output_dir: 'vo' });
     assert.equal(r.isError, false, r.text);
     const dir = path.join(folders.output, 'vo');
     const manifest = JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8'));
     assert.equal(manifest.segments.length, 2);
-    assert.equal(manifest.voice.id, 'amal');
+    assert.equal(manifest.voice.id, 'zeineb');
     assert.ok(manifest.segments[1].start > manifest.segments[0].end, 'lines are sequential with a gap');
     assert.ok(fs.existsSync(path.join(dir, 'clips', '002.wav')));
     assert.ok(fs.existsSync(path.join(dir, 'voiceover.wav')));
   });
 
   test('create_voiceover from SRT fits each line to its slot', async () => {
-    const r = await tapra.call('create_voiceover', { srt_path: 'dub.srt', voice: 'salah' });
+    const r = await tapra.call('create_voiceover', { srt_path: 'dub.srt', voice: 'karim' });
     assert.equal(r.isError, false, r.text);
     const sent = mock.calls('/v1/audio/speech').slice(-2);
     assert.deepEqual(sent.map((s) => s.fields.duration), ['1.5', '1.5']);

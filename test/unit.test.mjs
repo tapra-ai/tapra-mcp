@@ -97,10 +97,10 @@ test('file-name similarity ranks typos above unrelated names', () => {
   assert.ok(similarity('podcast', 'podcast episode 3') >= 0.75, 'containment bonus');
 });
 
-test('five named voices; unknown names and cloning are refused', () => {
-  assert.deepEqual(VOICES.map((v) => v.id), ['amal', 'salma', 'salah', 'fahmi', 'leo']);
-  for (const v of VOICES) assert.ok(v.description.length > 10);
-  assert.equal(voiceById(' Salma ').id, 'salma');
+test('eleven named voices; unknown names and cloning are refused', () => {
+  assert.deepEqual(VOICES.map((v) => v.id), ['youssef', 'zeineb', 'karim', 'sarra', 'anis', 'rim', 'hamza', 'mariem', 'mehdi', 'ines', 'walid']);
+  for (const v of VOICES) assert.ok(/^(Man|Woman)\./.test(v.description));
+  assert.equal(voiceById(' Sarra ').id, 'sarra');
   assert.throws(() => voiceById('khadija'), /Unknown voice "khadija"/);
   assert.match(CLONING_UNAVAILABLE, /not currently available/);
   for (const v of VOICES) assert.ok(CLONING_UNAVAILABLE.includes(v.name));
