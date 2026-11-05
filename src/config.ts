@@ -59,6 +59,8 @@ export const config = {
   ffmpeg: process.env.TAPRA_FFMPEG_PATH?.trim() || 'ffmpeg',
   /** Refuse any single tool call estimated above this many TND. */
   maxCostTnd: positiveNumber(process.env.TAPRA_MAX_COST_TND),
+  /** TAPRA_ALLOW_UNESTIMATED=1: run paid calls even when no cost estimate is possible. */
+  allowUnestimated: process.env.TAPRA_ALLOW_UNESTIMATED?.trim() === '1',
   /** Per-request HTTP timeout. Long audio can take a while on the model host. */
   timeoutSeconds: positiveNumber(process.env.TAPRA_TIMEOUT_SECONDS) ?? 600,
   /** Largest file returned inline in resources/both mode. */
@@ -82,6 +84,32 @@ function confine(p: string, root: string, what: string, envName: string): string
     throw new Error(`${what} ${full} is outside the allowed folder ${root}. Move it there or change ${envName}.`);
   }
   return full;
+}
+
+/**
+ * Folders inside the base folder that are never read, even though they are under it:
+ * hidden folders and files at any depth (`.ssh`, `.aws`, `.config`, `.env`, ...), and the
+ * app-data trees `AppData` (Windows) and `Library` (macOS) directly under the base folder,
+ * where keys, tokens and browser profiles live (so `~/Music/Library/x.mp3` still works).
+ * Checked case-insensitively on the path relative to the base folder.
+ */
+export function privatePart(full: string, root: string): string | undefined {
+  const rel = path.relative(root, full);
+  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return undefined;
+  const segments = rel.split(/[\\/]+/).filter(Boolean);
+  const first = segments[0]?.toLowerCase();
+  if (first === 'appdata' || first === 'library') return segments[0];
+  return segments.find((segment) => segment.startsWith('.'));
+}
+
+function refusePrivate(full: string, shown: string, root: string): void {
+  const part = privatePart(full, root);
+  if (part) {
+    throw new Error(
+      `Input file ${shown} is inside "${part}", a hidden or app-data folder that Tapra never reads. ` +
+        'Copy the file to a normal folder (for example Documents or Downloads) and try again.'
+    );
+  }
 }
 
 export type InputKind = 'media' | 'audio' | 'subtitles' | 'transcript' | 'any';
@@ -176,10 +204,12 @@ export function resolveInput(p: string, kind: InputKind = 'any', opts: { allowOu
     return checkInput(expanded, kind, config.outputDir);
   }
   full = confine(p, config.basePath, 'Input file', 'TAPRA_BASE_PATH');
-  return checkInput(full, kind, config.basePath);
+  // Before the existence check, so missing-file suggestions never list a private folder.
+  refusePrivate(full, full, config.basePath);
+  return checkInput(full, kind, config.basePath, true);
 }
 
-function checkInput(full: string, kind: InputKind, root: string): string {
+function checkInput(full: string, kind: InputKind, root: string, privateCheck = false): string {
   if (!fs.existsSync(full)) {
     const near = suggestFiles(full, kind);
     throw new Error(
@@ -191,6 +221,7 @@ function checkInput(full: string, kind: InputKind, root: string): string {
   if (!isInside(real, root)) {
     throw new Error(`Input file ${full} links outside the allowed folder ${root}.`);
   }
+  if (privateCheck) refusePrivate(real, full, root);
   if (!fs.statSync(real).isFile()) throw new Error(`Not a file: ${full}`);
   const exts = kind === 'any' ? undefined : EXTENSIONS[kind];
   if (exts && !exts.includes(path.extname(real).toLowerCase())) {
@@ -244,16 +275,34 @@ export function resolveOutput(p: string | undefined, prefix: string, ext: string
   } else {
     full = path.join(config.outputDir, uniqueName(prefix, ext));
   }
-  fs.mkdirSync(path.dirname(full), { recursive: true });
-  return freePath(full);
+  return freePath(path.join(realOutputDir(path.dirname(full)), path.basename(full)));
+}
+
+/**
+ * Creates `dir` and returns its real path, refusing it when a junction or symlink on the
+ * way leads outside outputDir (the text check in confine() cannot see links).
+ */
+function realOutputDir(dir: string): string {
+  const check = (real: string) => {
+    if (!isInside(real, config.outputDir)) {
+      throw new Error(`Output folder ${dir} links outside the allowed folder ${config.outputDir}. Remove the link or change TAPRA_OUTPUT_DIR.`);
+    }
+  };
+  // Check the closest existing folder first, so no folder is ever created through a link.
+  let existing = dir;
+  while (!fs.existsSync(existing) && path.dirname(existing) !== existing) existing = path.dirname(existing);
+  check(fs.realpathSync.native(existing));
+  fs.mkdirSync(dir, { recursive: true });
+  const real = fs.realpathSync.native(dir);
+  check(real);
+  return real;
 }
 
 /** A fresh, empty folder inside outputDir (an existing non-empty one gets a suffix). */
 export function resolveOutputDir(p: string | undefined, prefix: string): string {
   let full = p && p.trim() ? confine(p, config.outputDir, 'Output folder', 'TAPRA_OUTPUT_DIR') : path.join(config.outputDir, uniqueName(prefix, ''));
   if (fs.existsSync(full) && fs.readdirSync(full).length > 0) full = freePath(full);
-  fs.mkdirSync(full, { recursive: true });
-  return full;
+  return realOutputDir(full);
 }
 
 /** Shows only the key prefix, never the secret. */

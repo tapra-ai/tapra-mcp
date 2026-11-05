@@ -32,7 +32,8 @@ export const maxCost = z
   .number()
   .positive()
   .optional()
-  .describe('Refuse to run if the estimated cost is above this many TND. Defaults to TAPRA_MAX_COST_TND when set.');
+  .describe('Optional lower spending cap for this call, in TND: refuse to run if the estimated cost is above it. ' +
+      'It can only lower the cap set by the user (TAPRA_MAX_COST_TND, 20 TND by default), never raise it.');
 
 // ---------------------------------------------------------------------------
 // Progress notifications, so clients show progress and keep long calls alive

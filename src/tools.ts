@@ -11,6 +11,9 @@ import { buildCues, parseSubtitles, splitScript, toSrt, toTxt, toVtt, type Cue, 
 import { clock, cutSamples, SPEAKER_COLORS, speakersHtml, speakerStats, type SpeakerInfo } from './speakers.js';
 import {
   checkBudget,
+  DEFAULT_MAX_COST_TND,
+  extractAudioWithinBudget,
+  unestimatedError,
   client,
   describeError,
   estimate,
@@ -372,7 +375,7 @@ export function registerTools(server: McpServer): void {
           `Input folder (files must be inside): ${config.basePath}`,
           `Voices: ${VOICES.map((v) => v.id).join(', ')} (cloning not available)`,
           `ffmpeg: ${(await hasFfmpeg()) ? 'available' : 'NOT found (video tools, chunking and cost estimates for audio need it)'}`,
-          `Max cost per call: ${config.maxCostTnd ? formatTnd(config.maxCostTnd) : 'no limit set'}`
+          `Max cost per call: ${config.maxCostTnd ? `${formatTnd(config.maxCostTnd)} (TAPRA_MAX_COST_TND)` : `${formatTnd(DEFAULT_MAX_COST_TND)} (default; set TAPRA_MAX_COST_TND to change)`}`
         ];
         try {
           const health = await client.fetch('/health', { method: 'GET' }, { timeoutInSeconds: 15, maxRetries: 0 });
@@ -647,11 +650,11 @@ export function registerTools(server: McpServer): void {
         let tmp: string | undefined;
         try {
           if (await hasFfmpeg()) {
-            const info = await probe(input);
-            checkBudget(await estimate('offline', (info.durationSeconds ?? 0) * 1000), args.max_cost_tnd, 'Speaker labelling');
             tmp = makeTempDir('diar');
             upload = path.join(tmp, 'audio.wav');
-            await extractWav16k(input, upload);
+            await extractAudioWithinBudget(input, upload, args.max_cost_tnd, 'Speaker labelling');
+          } else if (!config.allowUnestimated) {
+            throw unestimatedError('Speaker labelling', 'ffmpeg is not installed, so the audio length is unknown; install ffmpeg or set TAPRA_FFMPEG_PATH');
           }
           const res = await client.diarization.create({ file: { path: upload, filename: path.basename(upload) } }, requestOptions());
           const spend = new Spend();
