@@ -134,10 +134,11 @@ spills into the next one.
 | `TAPRA_API_URL` | read from tapra.tn | Force an API origin. Must be `https://`; plain `http://` only for `localhost` / `127.0.0.1` (e.g. `http://127.0.0.1:8787` for a local model host). A non-tapra.tn host gets a warning on stderr, since your key is sent there |
 | `TAPRA_SITE_URL` | `https://www.tapra.tn` | Website serving the price list, balance, and the current API address |
 | `TAPRA_OUTPUT_DIR` | `~/Tapra` | Where generated files go; outputs can't be written anywhere else |
-| `TAPRA_BASE_PATH` | home folder | Input files must be inside this folder; relative paths resolve here. Hidden folders/files (`.ssh`, `.config`, …), `AppData` and `Library` inside it are never read |
+| `TAPRA_BASE_PATH` | home folder | Input files must be inside this folder; relative paths resolve here. Hidden folders/files (`.ssh`, `.config`, …) at any depth, and `AppData` / `Library` directly inside it, are never read |
 | `TAPRA_MCP_OUTPUT_MODE` | `files` | `files` saves results; `resources` returns them inline only (nothing saved); `both` does both |
 | `TAPRA_MCP_MAX_INLINE_MB` | `15` | Largest file returned inline in `resources` / `both` mode |
-| `TAPRA_MAX_COST_TND` | `5` | Refuse any single call estimated above this many TND. Only you can raise it; a tool's `max_cost_tnd` argument can only lower it |
+| `TAPRA_MAX_COST_TND` | `20` | Refuse any single call estimated above this many TND. Only you can raise it; a tool's `max_cost_tnd` argument can only lower it |
+| `TAPRA_ALLOW_UNESTIMATED` | off | `1` lets paid calls run when no cost estimate is possible (price list unreachable, or no ffmpeg to measure audio). Off: such calls are refused |
 | `TAPRA_FFMPEG_PATH` | `ffmpeg` | Path to ffmpeg if it is not on `PATH` |
 | `TAPRA_TIMEOUT_SECONDS` | `600` | Per-request timeout |
 | `TAPRA_AUDIO_PLAYER` | ffplay, then the system player | Program `play_audio` runs as `<player> <file>`. A Windows `.cmd`/`.bat` player runs through the shell, so file names containing `% ! ^ & \| < > "` are refused with it; prefer an `.exe` |
@@ -148,16 +149,18 @@ address, so moving the model host needs no client change. Only an `https://` add
 `https://api.tapra.tn`.
 
 Spending: every paid call is estimated first and refused above `TAPRA_MAX_COST_TND`
-(5 TND per call when unset). The model can pass `max_cost_tnd` to ask for a lower cap, never
-a higher one. When no estimate is possible (price list unreachable, or ffmpeg missing so a
-media file's length is unknown) the call goes ahead; the API still bills only what is used
-and refuses when your balance runs out.
+(20 TND per call when unset, about 2 h of transcription). The model can pass `max_cost_tnd`
+to ask for a lower cap, never a higher one. Audio length is measured on the extracted audio,
+not the file header, and extraction stops at the length the cap pays for. When no estimate is
+possible (price list unreachable, or ffmpeg missing so the length is unknown) the call is
+refused unless `TAPRA_ALLOW_UNESTIMATED=1`.
 
 File safety: inputs outside `TAPRA_BASE_PATH` (including through symlinks) and outputs
-outside `TAPRA_OUTPUT_DIR` (including through symlinks or junctions) are refused. Inside the base
-folder, hidden folders and files (any path part starting with `.`, such as `.ssh` or `.aws`) and
-`AppData` / `Library` are refused too, checked on the real path and ignoring case (tools that work on results, like `play_audio` and
-`edit_audio`, also accept files in the output folder or `tapra://output/...` URIs), and an existing file is never replaced (`take.wav`
+outside `TAPRA_OUTPUT_DIR` (including through symlinks or junctions) are refused. Tools that
+work on results, like `play_audio` and `edit_audio`, also accept files in the output folder or
+`tapra://output/...` URIs. Inside the base folder, hidden folders and files (any path part
+starting with `.`, such as `.ssh` or `.aws`) and `AppData` / `Library` directly under it are
+refused too, checked on the real path and ignoring case. An existing file is never replaced (`take.wav`
 becomes `take-1.wav`). A missing input gets "did you mean" suggestions from the same folder.
 Every file a tool makes can be re-read as an MCP resource, `tapra://output/<path>`.
 

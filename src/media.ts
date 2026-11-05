@@ -113,6 +113,32 @@ export async function extractWav16k(
   await ffmpeg(args);
 }
 
+/**
+ * Real length of a mono 16 kHz 16-bit WAV made by extractWav16k, from its size on disk
+ * (32,000 bytes per second after the header), so a lying container header cannot hide length.
+ */
+export function wavSeconds(file: string): number {
+  const size = fs.statSync(file).size;
+  const fd = fs.openSync(file, 'r');
+  let dataStart = 44;
+  try {
+    const head = Buffer.alloc(Math.min(size, 4096));
+    fs.readSync(fd, head, 0, head.length, 0);
+    for (let off = 12; off + 8 <= head.length; ) {
+      const id = head.toString('ascii', off, off + 4);
+      const len = head.readUInt32LE(off + 4);
+      if (id === 'data') {
+        dataStart = off + 8;
+        break;
+      }
+      off += 8 + len + (len % 2);
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
+  return Math.max(0, size - dataStart) / 32_000;
+}
+
 export function makeTempDir(prefix: string): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), `tapra-mcp-${prefix}-`));
 }

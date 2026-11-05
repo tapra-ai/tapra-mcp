@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { estimateCostTnd, fetchTapraPrices, TapraClient, TapraError, type Tapra, type TapraPrices } from '@tapra/sdk';
 import { config, FALLBACK_API_URL } from './config.js';
-import { extractWav16k, hasFfmpeg, makeTempDir, probe, removeDir } from './media.js';
+import { extractWav16k, hasFfmpeg, makeTempDir, probe, removeDir, wavSeconds } from './media.js';
 import { linkSpeakers, renumberSpeakers } from './speakers.js';
 
 // ---------------------------------------------------------------------------
@@ -151,10 +151,10 @@ export async function estimate(service: string, quantity: number, multiplier = 1
 }
 
 /** Per-call cap when TAPRA_MAX_COST_TND is not set. */
-export const DEFAULT_MAX_COST_TND = 5;
+export const DEFAULT_MAX_COST_TND = 20;
 
 /**
- * The cap for one call. TAPRA_MAX_COST_TND (set by the user) is the ceiling, 5 TND by
+ * The cap for one call. TAPRA_MAX_COST_TND (set by the user) is the ceiling, 20 TND by
  * default; the tool argument `max_cost_tnd` (chosen by the model) can only lower it, so a
  * prompt injection cannot raise the spending limit.
  */
@@ -163,32 +163,78 @@ export function effectiveLimit(limitTnd: number | undefined, envLimitTnd: number
   return typeof limitTnd === 'number' && Number.isFinite(limitTnd) && limitTnd > 0 ? Math.min(limitTnd, ceiling) : ceiling;
 }
 
+function limitSource(limitTnd: number | undefined, envLimitTnd: number | undefined): string {
+  const ceiling = envLimitTnd ?? DEFAULT_MAX_COST_TND;
+  return typeof limitTnd === 'number' && limitTnd < ceiling
+    ? 'max_cost_tnd for this call'
+    : envLimitTnd !== undefined
+      ? 'TAPRA_MAX_COST_TND'
+      : 'default per-call cap; TAPRA_MAX_COST_TND is not set';
+}
+
+const RAISE_HINT = 'Only the user can allow this: ask them to set TAPRA_MAX_COST_TND higher in the MCP server env and restart it.';
+
+/** Error for a paid call whose cost cannot be estimated (fail closed). */
+export function unestimatedError(what: string, why: string): Error {
+  return new Error(
+    `${what}: the cost cannot be estimated (${why}), so nothing was sent or charged. ` +
+      'Try again later, or the user can set TAPRA_ALLOW_UNESTIMATED=1 in the MCP server env to run calls without an estimate.'
+  );
+}
+
 /**
- * Throws when an estimate is over the effective limit (see effectiveLimit).
- * A null estimate (price list unreachable, or media length unknown) is let through, as
- * before: the API still bills only what is used and refuses when the balance runs out.
+ * Throws when an estimate is over the effective limit (see effectiveLimit). A null estimate
+ * (price list unreachable) fails closed unless TAPRA_ALLOW_UNESTIMATED=1.
  */
 export function checkBudget(
   estimateTnd: number | null,
   limitTnd: number | undefined,
   what: string,
-  envLimitTnd: number | undefined = config.maxCostTnd
+  envLimitTnd: number | undefined = config.maxCostTnd,
+  allowUnestimated: boolean = config.allowUnestimated
 ): void {
-  if (estimateTnd === null) return;
+  if (estimateTnd === null || !Number.isFinite(estimateTnd)) {
+    if (allowUnestimated) return;
+    throw unestimatedError(what, 'the Tapra price list could not be reached');
+  }
   const limit = effectiveLimit(limitTnd, envLimitTnd);
   if (estimateTnd > limit) {
-    const ceiling = envLimitTnd ?? DEFAULT_MAX_COST_TND;
-    const source =
-      typeof limitTnd === 'number' && limitTnd < ceiling
-        ? 'max_cost_tnd for this call'
-        : envLimitTnd !== undefined
-          ? 'TAPRA_MAX_COST_TND'
-          : 'default per-call cap; TAPRA_MAX_COST_TND is not set';
     throw new Error(
-      `${what} is estimated at ${formatTnd(estimateTnd)}, above the ${formatTnd(limit)} limit (${source}). Nothing was charged. ` +
-        'Only the user can allow this: ask them to set TAPRA_MAX_COST_TND higher in the MCP server env and restart it.'
+      `${what} is estimated at ${formatTnd(estimateTnd)}, above the ${formatTnd(limit)} limit (${limitSource(limitTnd, envLimitTnd)}). ` +
+        `Nothing was charged. ${RAISE_HINT}`
     );
   }
+}
+
+/**
+ * Extracts `input` to mono 16 kHz WAV for transcription or diarization, bounded by the
+ * spending cap: ffmpeg stops (`-t`) just past the seconds the cap pays for, and the budget
+ * is checked against the extracted file's real length, not the container header (which
+ * can be missing, e.g. MediaRecorder WebM, or wrong). `billed` maps real seconds to billed
+ * seconds (chunk overlap). Returns the real length in seconds.
+ */
+export async function extractAudioWithinBudget(
+  input: string,
+  output: string,
+  limitTnd: number | undefined,
+  what: string,
+  billed: (seconds: number) => number = (s) => s
+): Promise<number> {
+  const limit = effectiveLimit(limitTnd);
+  const perHour = await estimate('offline', 3_600_000);
+  let capSeconds: number | undefined;
+  if (perHour !== null && Number.isFinite(perHour) && perHour > 0) capSeconds = (limit / perHour) * 3600;
+  else if (!config.allowUnestimated) throw unestimatedError(what, 'the Tapra price list could not be reached');
+  await extractWav16k(input, output, undefined, capSeconds !== undefined ? capSeconds + 1 : undefined);
+  const seconds = wavSeconds(output);
+  if (capSeconds !== undefined && billed(seconds) > capSeconds) {
+    throw new Error(
+      `${what}: the audio is longer than the ${formatTnd(limit)} limit (${limitSource(limitTnd, config.maxCostTnd)}) pays for ` +
+        `(about ${Math.floor(capSeconds / 60)} min). Nothing was charged. Trim it with edit_audio, or: ${RAISE_HINT}`
+    );
+  }
+  checkBudget(await estimate('offline', billed(seconds) * 1000), limitTnd, `${what} ${Math.round(seconds)} s`);
+  return seconds;
 }
 
 export function formatTnd(tnd: number): string {
@@ -302,29 +348,36 @@ export async function transcribeMedia(inputPath: string, opts: TranscribeOptions
     if (await hasFfmpeg()) {
       const info = await probe(inputPath);
       if (!info.hasAudio) throw new Error(`No audio track found in ${inputPath}.`);
-      const duration = info.durationSeconds ?? 0;
       const chunkSeconds = Math.max(60, (opts.chunkMinutes ?? 15) * 60);
-      const chunked = duration > chunkSeconds + 30;
-      const count = chunked ? Math.ceil(duration / chunkSeconds) : 1;
-      const billed = duration + (count - 1) * CHUNK_OVERLAP_SECONDS;
-      checkBudget(await estimate('offline', billed * 1000), opts.maxCostTnd, `Transcribing ${Math.round(duration)} s`);
+      const chunkCount = (seconds: number) => (seconds > chunkSeconds + 30 ? Math.ceil(seconds / chunkSeconds) : 1);
       tmp = makeTempDir('stt');
-      if (chunked) {
+      const full = path.join(tmp, 'audio.wav');
+      // The real length comes from the extracted audio, never from the (possibly missing or wrong) header.
+      const duration = await extractAudioWithinBudget(
+        inputPath,
+        full,
+        opts.maxCostTnd,
+        'Transcribing',
+        (seconds) => seconds + (chunkCount(seconds) - 1) * CHUNK_OVERLAP_SECONDS
+      );
+      const count = chunkCount(duration);
+      if (count > 1) {
         const half = CHUNK_OVERLAP_SECONDS / 2;
         for (let i = 0; i < count; i++) {
           const nominal = i * chunkSeconds;
           const from = i === 0 ? 0 : nominal - CHUNK_OVERLAP_SECONDS;
           const to = Math.min(duration, nominal + chunkSeconds);
           const file = path.join(tmp, `chunk_${String(i).padStart(3, '0')}.wav`);
-          await extractWav16k(inputPath, file, from, to - from);
+          await extractWav16k(full, file, from, to - from);
           pieces.push({ file, offset: from, keepFrom: i === 0 ? -Infinity : nominal - half, keepTo: i === count - 1 ? Infinity : nominal + chunkSeconds - half });
         }
       } else {
-        const file = path.join(tmp, 'audio.wav');
-        await extractWav16k(inputPath, file);
-        pieces.push({ file, offset: 0, keepFrom: -Infinity, keepTo: Infinity });
+        pieces.push({ file: full, offset: 0, keepFrom: -Infinity, keepTo: Infinity });
       }
     } else {
+      if (!config.allowUnestimated) {
+        throw unestimatedError('Transcribing', 'ffmpeg is not installed, so the audio length is unknown; install ffmpeg or set TAPRA_FFMPEG_PATH');
+      }
       const size = fs.statSync(inputPath).size;
       if (size > MAX_DIRECT_UPLOAD_BYTES) {
         throw new Error('File is over 100 MB. Install ffmpeg so the MCP server can compress and split it.');

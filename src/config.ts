@@ -59,6 +59,8 @@ export const config = {
   ffmpeg: process.env.TAPRA_FFMPEG_PATH?.trim() || 'ffmpeg',
   /** Refuse any single tool call estimated above this many TND. */
   maxCostTnd: positiveNumber(process.env.TAPRA_MAX_COST_TND),
+  /** TAPRA_ALLOW_UNESTIMATED=1: run paid calls even when no cost estimate is possible. */
+  allowUnestimated: process.env.TAPRA_ALLOW_UNESTIMATED?.trim() === '1',
   /** Per-request HTTP timeout. Long audio can take a while on the model host. */
   timeoutSeconds: positiveNumber(process.env.TAPRA_TIMEOUT_SECONDS) ?? 600,
   /** Largest file returned inline in resources/both mode. */
@@ -86,20 +88,18 @@ function confine(p: string, root: string, what: string, envName: string): string
 
 /**
  * Folders inside the base folder that are never read, even though they are under it:
- * hidden folders and files (`.ssh`, `.aws`, `.config`, `.env`, ...) and the app-data trees
- * `AppData` (Windows) and `Library` (macOS), where keys, tokens and browser profiles live.
+ * hidden folders and files at any depth (`.ssh`, `.aws`, `.config`, `.env`, ...), and the
+ * app-data trees `AppData` (Windows) and `Library` (macOS) directly under the base folder,
+ * where keys, tokens and browser profiles live (so `~/Music/Library/x.mp3` still works).
  * Checked case-insensitively on the path relative to the base folder.
  */
 export function privatePart(full: string, root: string): string | undefined {
   const rel = path.relative(root, full);
   if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return undefined;
-  for (const segment of rel.split(/[\\/]+/)) {
-    if (!segment) continue;
-    if (segment.startsWith('.')) return segment;
-    const lower = segment.toLowerCase();
-    if (lower === 'appdata' || lower === 'library') return segment;
-  }
-  return undefined;
+  const segments = rel.split(/[\\/]+/).filter(Boolean);
+  const first = segments[0]?.toLowerCase();
+  if (first === 'appdata' || first === 'library') return segments[0];
+  return segments.find((segment) => segment.startsWith('.'));
 }
 
 function refusePrivate(full: string, shown: string, root: string): void {

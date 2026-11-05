@@ -12,6 +12,8 @@ import { clock, cutSamples, SPEAKER_COLORS, speakersHtml, speakerStats, type Spe
 import {
   checkBudget,
   DEFAULT_MAX_COST_TND,
+  extractAudioWithinBudget,
+  unestimatedError,
   client,
   describeError,
   estimate,
@@ -648,11 +650,11 @@ export function registerTools(server: McpServer): void {
         let tmp: string | undefined;
         try {
           if (await hasFfmpeg()) {
-            const info = await probe(input);
-            checkBudget(await estimate('offline', (info.durationSeconds ?? 0) * 1000), args.max_cost_tnd, 'Speaker labelling');
             tmp = makeTempDir('diar');
             upload = path.join(tmp, 'audio.wav');
-            await extractWav16k(input, upload);
+            await extractAudioWithinBudget(input, upload, args.max_cost_tnd, 'Speaker labelling');
+          } else if (!config.allowUnestimated) {
+            throw unestimatedError('Speaker labelling', 'ffmpeg is not installed, so the audio length is unknown; install ffmpeg or set TAPRA_FFMPEG_PATH');
           }
           const res = await client.diarization.create({ file: { path: upload, filename: path.basename(upload) } }, requestOptions());
           const spend = new Spend();
