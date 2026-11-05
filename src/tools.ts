@@ -11,6 +11,7 @@ import { buildCues, parseSubtitles, splitScript, toSrt, toTxt, toVtt, type Cue, 
 import { clock, cutSamples, SPEAKER_COLORS, speakersHtml, speakerStats, type SpeakerInfo } from './speakers.js';
 import {
   checkBudget,
+  DEFAULT_MAX_COST_TND,
   client,
   describeError,
   estimate,
@@ -372,7 +373,7 @@ export function registerTools(server: McpServer): void {
           `Input folder (files must be inside): ${config.basePath}`,
           `Voices: ${VOICES.map((v) => v.id).join(', ')} (cloning not available)`,
           `ffmpeg: ${(await hasFfmpeg()) ? 'available' : 'NOT found (video tools, chunking and cost estimates for audio need it)'}`,
-          `Max cost per call: ${config.maxCostTnd ? formatTnd(config.maxCostTnd) : 'no limit set'}`
+          `Max cost per call: ${config.maxCostTnd ? `${formatTnd(config.maxCostTnd)} (TAPRA_MAX_COST_TND)` : `${formatTnd(DEFAULT_MAX_COST_TND)} (default; set TAPRA_MAX_COST_TND to change)`}`
         ];
         try {
           const health = await client.fetch('/health', { method: 'GET' }, { timeoutInSeconds: 15, maxRetries: 0 });

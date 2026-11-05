@@ -68,6 +68,24 @@ function player(file: string): { name: string; cmd: string; args: string[] } {
   throw new Error('No audio player found. Install ffmpeg (ffplay) or set TAPRA_AUDIO_PLAYER.');
 }
 
+/** True for a Windows batch player, which Node can only start through cmd.exe. */
+export function needsShell(cmd: string, platform: NodeJS.Platform = process.platform): boolean {
+  return platform === 'win32' && /\.(cmd|bat)$/i.test(cmd.trim());
+}
+
+const SHELL_UNSAFE = /[%!^&|<>"\r\n]/;
+
+/** Throws when any argument could be read as cmd.exe syntax (variables, pipes, redirects, quotes). */
+export function checkShellSafe(parts: string[]): void {
+  const bad = parts.find((a) => SHELL_UNSAFE.test(a));
+  if (bad !== undefined) {
+    throw new Error(
+      `Cannot play "${path.basename(bad)}" with the .cmd/.bat player in TAPRA_AUDIO_PLAYER: the name contains one of % ! ^ & | < > " ` +
+        'which the Windows shell would interpret. Rename the file, or set TAPRA_AUDIO_PLAYER to an .exe player (for example ffplay.exe).'
+    );
+  }
+}
+
 function stopPlayback(): boolean {
   if (!playing || playing.exitCode !== null) return false;
   playing.kill();
@@ -216,8 +234,10 @@ export function registerExtraTools(server: McpServer): void {
         const file = resolveInput(args.input_path, 'media', { allowOutputs: true });
         const p = player(file);
         stopPlayback();
-        // Windows runs .cmd/.bat players only through a shell; quote everything for it.
-        const viaShell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(p.cmd);
+        // Windows runs .cmd/.bat players only through cmd.exe, which expands %VAR% and !VAR!
+        // and treats ^ & | < > " as syntax even inside quotes; refuse names that could inject.
+        const viaShell = needsShell(p.cmd);
+        if (viaShell) checkShellSafe([p.cmd, ...p.args]);
         const child = viaShell
           ? spawn([p.cmd, ...p.args].map((a) => `"${a.replace(/"/g, '')}"`).join(' '), { stdio: 'ignore', windowsHide: true, shell: true })
           : spawn(p.cmd, p.args, { stdio: 'ignore', windowsHide: true });

@@ -19,14 +19,74 @@ export interface ApiUrl {
 let apiUrlPromise: Promise<ApiUrl> | undefined;
 let resolvedApiUrl: ApiUrl | undefined;
 
+function isLoopbackHost(hostname: string): boolean {
+  const h = hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  return h === 'localhost' || h.endsWith('.localhost') || h === '::1' || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(h);
+}
+
+function isTapraHost(hostname: string): boolean {
+  const h = hostname.toLowerCase().replace(/\.$/, '');
+  return h === 'tapra.tn' || h.endsWith('.tapra.tn');
+}
+
+function parseUrl(url: string): URL | undefined {
+  try {
+    return new URL(url);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Whether an API address advertised by the website may receive the API key: https on
+ * tapra.tn or a subdomain. The one exception is a site that is itself on this computer
+ * (TAPRA_SITE_URL pointing at a local dev server), which may advertise a local http API.
+ */
+export function isTrustedAdvertisedUrl(url: string, siteUrl: string): boolean {
+  const u = parseUrl(url);
+  if (!u || u.username || u.password) return false;
+  if (u.protocol === 'https:' && isTapraHost(u.hostname)) return true;
+  const site = parseUrl(siteUrl);
+  return Boolean(site && isLoopbackHost(site.hostname) && isLoopbackHost(u.hostname) && /^https?:$/.test(u.protocol));
+}
+
+/**
+ * Checks TAPRA_API_URL. The user chose it, so any https host is allowed (with a warning
+ * when it is not Tapra's); plain http only for this computer, so the key never crosses
+ * the network unencrypted.
+ */
+export function checkApiUrlOverride(url: string): { ok: true; warning?: string } | { ok: false; error: string } {
+  const u = parseUrl(url);
+  if (!u || !/^https?:$/.test(u.protocol)) return { ok: false, error: `TAPRA_API_URL must be an http(s) URL (got "${url}").` };
+  if (u.protocol === 'http:' && !isLoopbackHost(u.hostname)) {
+    return { ok: false, error: `TAPRA_API_URL must use https (plain http is only allowed for localhost / 127.0.0.1); got ${url}.` };
+  }
+  if (!isTapraHost(u.hostname) && !isLoopbackHost(u.hostname)) {
+    return { ok: true, warning: `tapra-mcp: TAPRA_API_URL points at ${u.host}, which is not a tapra.tn host; your API key will be sent there.` };
+  }
+  return { ok: true };
+}
+
+let overrideWarned = false;
+
 async function discoverApiUrl(): Promise<ApiUrl> {
-  if (config.apiUrlOverride) return { url: config.apiUrlOverride, source: 'TAPRA_API_URL' };
+  if (config.apiUrlOverride) {
+    const check = checkApiUrlOverride(config.apiUrlOverride);
+    if (!check.ok) throw new Error(check.error);
+    if (check.warning && !overrideWarned) {
+      overrideWarned = true;
+      process.stderr.write(`${check.warning}
+`);
+    }
+    return { url: config.apiUrlOverride, source: 'TAPRA_API_URL' };
+  }
   try {
     const res = await fetch(`${config.siteUrl}/api/openapi`, { signal: AbortSignal.timeout(10_000) });
     if (res.ok) {
       const spec = (await res.json()) as { servers?: { url?: string }[] };
       const url = spec.servers?.[0]?.url?.trim().replace(/\/+$/, '');
-      if (url && /^https?:\/\//.test(url)) return { url, source: 'website' };
+      // Anything else (http, another domain) is ignored: the key only goes to Tapra over https.
+      if (url && isTrustedAdvertisedUrl(url, config.siteUrl)) return { url, source: 'website' };
     }
   } catch {
     // Fall through to the fallback address.
@@ -35,12 +95,18 @@ async function discoverApiUrl(): Promise<ApiUrl> {
 }
 
 export function getApiUrl(): Promise<ApiUrl> {
-  apiUrlPromise ??= discoverApiUrl().then((r) => {
-    resolvedApiUrl = r;
-    // Retry discovery on the next call if the website was unreachable.
-    if (r.source === 'fallback') apiUrlPromise = undefined;
-    return r;
-  });
+  apiUrlPromise ??= discoverApiUrl().then(
+    (r) => {
+      resolvedApiUrl = r;
+      // Retry discovery on the next call if the website was unreachable.
+      if (r.source === 'fallback') apiUrlPromise = undefined;
+      return r;
+    },
+    (err: unknown) => {
+      apiUrlPromise = undefined;
+      throw err;
+    }
+  );
   return apiUrlPromise;
 }
 
@@ -84,14 +150,43 @@ export async function estimate(service: string, quantity: number, multiplier = 1
   }
 }
 
-/** Throws when an estimate is over the caller's limit or TAPRA_MAX_COST_TND. */
-export function checkBudget(estimateTnd: number | null, limitTnd: number | undefined, what: string): void {
-  const limit = limitTnd ?? config.maxCostTnd;
-  if (limit === undefined || estimateTnd === null) return;
+/** Per-call cap when TAPRA_MAX_COST_TND is not set. */
+export const DEFAULT_MAX_COST_TND = 5;
+
+/**
+ * The cap for one call. TAPRA_MAX_COST_TND (set by the user) is the ceiling, 5 TND by
+ * default; the tool argument `max_cost_tnd` (chosen by the model) can only lower it, so a
+ * prompt injection cannot raise the spending limit.
+ */
+export function effectiveLimit(limitTnd: number | undefined, envLimitTnd: number | undefined = config.maxCostTnd): number {
+  const ceiling = envLimitTnd ?? DEFAULT_MAX_COST_TND;
+  return typeof limitTnd === 'number' && Number.isFinite(limitTnd) && limitTnd > 0 ? Math.min(limitTnd, ceiling) : ceiling;
+}
+
+/**
+ * Throws when an estimate is over the effective limit (see effectiveLimit).
+ * A null estimate (price list unreachable, or media length unknown) is let through, as
+ * before: the API still bills only what is used and refuses when the balance runs out.
+ */
+export function checkBudget(
+  estimateTnd: number | null,
+  limitTnd: number | undefined,
+  what: string,
+  envLimitTnd: number | undefined = config.maxCostTnd
+): void {
+  if (estimateTnd === null) return;
+  const limit = effectiveLimit(limitTnd, envLimitTnd);
   if (estimateTnd > limit) {
+    const ceiling = envLimitTnd ?? DEFAULT_MAX_COST_TND;
+    const source =
+      typeof limitTnd === 'number' && limitTnd < ceiling
+        ? 'max_cost_tnd for this call'
+        : envLimitTnd !== undefined
+          ? 'TAPRA_MAX_COST_TND'
+          : 'default per-call cap; TAPRA_MAX_COST_TND is not set';
     throw new Error(
-      `${what} is estimated at ${formatTnd(estimateTnd)}, above the ${formatTnd(limit)} limit. ` +
-        'Raise max_cost_tnd (or TAPRA_MAX_COST_TND) to go ahead.'
+      `${what} is estimated at ${formatTnd(estimateTnd)}, above the ${formatTnd(limit)} limit (${source}). Nothing was charged. ` +
+        'Only the user can allow this: ask them to set TAPRA_MAX_COST_TND higher in the MCP server env and restart it.'
     );
   }
 }
