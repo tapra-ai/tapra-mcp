@@ -9,7 +9,7 @@ import { registerTools } from './tools.js';
 import { voiceMenu } from './voices.js';
 
 const server = new McpServer(
-  { name: 'tapra', title: 'Tapra', version: '0.1.6' },
+  { name: 'tapra', title: 'Tapra', version: '0.1.7' },
   {
     instructions:
       'Tapra speech and language tools for Tunisian Derja code-switched with French and English. ' +
