@@ -31,6 +31,8 @@ import {
   CLONING_UNAVAILABLE,
   DEFAULT_VOICE_ID,
   effectsMenu,
+  EMOTION_IDS,
+  emotionsMenu,
   SPEECH_MODELS,
   stripEffectTags,
   unknownEffectTags,
@@ -62,6 +64,13 @@ const voiceShape = {
     .default('full')
     .describe('"full" = best quality; "flash" = same voices, about 5x faster and cheaper.'),
   speed: z.number().min(0.7).max(1.3).optional().describe('Speaking rate, 0.7-1.3. Default 1.0.'),
+  emotion: z
+    .enum(EMOTION_IDS)
+    .optional()
+    .describe(
+      `Emotion for the whole text: ${emotionsMenu()}. Omit for the plain voice. To change it mid-text, ` +
+        'write a tag in the text instead: [whisper] (or any emotion) from that point, [normal] to go back.'
+    ),
   convert_arabizi: z
     .boolean()
     .default(true)
@@ -75,6 +84,7 @@ type VoiceArgs = {
   voice: string;
   quality: 'full' | 'flash';
   speed?: number;
+  emotion?: string;
   convert_arabizi: boolean;
 };
 
@@ -97,6 +107,7 @@ async function synthesize(text: string, args: VoiceArgs, durationSeconds?: numbe
   // Tunisian pronunciation for loanwords and Arabizi (the API default is French).
   form.append('pronunciation_style', 'tunisian');
   if (args.speed) form.append('speed', String(args.speed));
+  if (args.emotion) form.append('emotion', args.emotion);
   if (durationSeconds) form.append('duration', String(Math.min(120, Math.max(0.2, durationSeconds))));
   form.append('response_format', 'json');
   const opts = requestOptions();
@@ -688,6 +699,8 @@ export function registerTools(server: McpServer): void {
         `with Tunisian pronunciation. Voices: ${voiceMenu()}. ` +
         DERJA_SCRIPT_HINT +
         `Add non-verbal effects inline with tags (not billed): ${effectsMenu()}. Example: "[euh] ما نعرفش, [breath] خلّي نشوف". ` +
+        `Set an emotion with \`emotion\` (${EMOTION_IDS.join(', ')}), or change it mid-text with a tag: ` +
+        '"عسلامة [whisper] ما تقول لحتى حد [normal] نتلاقاو غدوة". ' +
         'Saves the audio in the chosen format (wav by default, 18 other formats). ' +
         'Voice cloning and custom voice design are not currently available: if the user asks to clone a voice, say so ' +
         'and offer these voices. Costs money per character. For long scripts or narration timed to a video, use create_voiceover.',
