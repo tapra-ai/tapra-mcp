@@ -136,9 +136,29 @@ export function stripEffectTags(text: string): string {
   return text.replace(TAG_PATTERN, ' ').split(/\s+/).filter(Boolean).join(' ');
 }
 
-/** Tags in `text` that Tapra-Speak does not know. */
+/**
+ * Emotions Tapra-Speak can put on the delivery (the API's `emotion` field). Inside the text, `[whisper]` (or any
+ * emotion) changes the delivery from that point and `[normal]` goes back to the plain voice.
+ */
+export const EMOTIONS: readonly { id: string; feel: string }[] = [
+  { id: 'happy', feel: 'cheerful, excited' },
+  { id: 'sad', feel: 'low, heavy' },
+  { id: 'angry', feel: 'sharp, loud' },
+  { id: 'surprised', feel: 'caught off guard' },
+  { id: 'fearful', feel: 'scared, tense' },
+  { id: 'disgusted', feel: 'put off, repelled' },
+  { id: 'whisper', feel: 'quiet, secret' }
+];
+export const EMOTION_IDS = EMOTIONS.map((e) => e.id) as [string, ...string[]];
+const EMOTION_TAGS = new Set([...EMOTION_IDS, 'normal', 'neutral']);
+
+export function emotionsMenu(): string {
+  return EMOTIONS.map((e) => `${e.id} (${e.feel})`).join(', ');
+}
+
+/** Tags in `text` that Tapra-Speak does not know (effect and emotion tags are known). */
 export function unknownEffectTags(text: string): string[] {
-  const known = new Set(EFFECTS.map((e) => e.tag));
+  const known = new Set([...EFFECTS.map((e) => e.tag), ...EMOTION_TAGS]);
   return [...new Set((text.match(TAG_PATTERN) ?? []).map((t) => t.slice(1, -1)))].filter((t) => !known.has(t));
 }
 
