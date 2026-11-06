@@ -698,7 +698,7 @@ export function registerTools(server: McpServer): void {
         'Speak text in Tunisian Derja, French, English, or a mix with one of the Tapra voices, ' +
         `with Tunisian pronunciation. Voices: ${voiceMenu()}. ` +
         DERJA_SCRIPT_HINT +
-        `Add non-verbal effects inline with tags (not billed): ${effectsMenu()}. Example: "[euh] ما نعرفش, [breath] خلّي نشوف". ` +
+        `Add non-verbal effects inline with tags (tags count as billed characters): ${effectsMenu()}. Example: "[euh] ما نعرفش, [breath] خلّي نشوف". ` +
         `Set an emotion with \`emotion\` (${EMOTION_IDS.join(', ')}), or change it mid-text with a tag: ` +
         '"عسلامة [whisper] ما تقول لحتى حد [normal] نتلاقاو غدوة". ' +
         'Saves the audio in the chosen format (wav by default, 18 other formats). ' +
