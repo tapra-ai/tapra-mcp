@@ -117,7 +117,7 @@ export const SPEECH_MODELS = { full: 'tapra-speak-v1', flash: 'tapra-speak-flash
 /**
  * Non-verbal effect tags Tapra-Speak understands (same list as Voice Studio,
  * src/features/voice-studio/effects.ts). Write them inline, e.g. "[euh] ma na3rafch".
- * The server swaps each tag for the sound; tags are not billed.
+ * The server swaps each tag for the sound; tags are billed as characters like any text.
  */
 export const EFFECTS: readonly { tag: string; sound: string }[] = [
   { tag: 'euh', sound: 'breathy hesitation' },
