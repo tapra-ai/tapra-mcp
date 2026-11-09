@@ -1,7 +1,8 @@
 /**
- * The Tapra voices offered through the MCP server. They are tapra-speak-v1 speakers
- * (the same ones as Voice Studio, see src/features/voice-studio/voices.ts); `instruct`
- * is the style hint Voice Studio sends with each one.
+ * Built-in copy of the Tapra voices (tapra-speak-v1 speakers, the same ones as Voice Studio).
+ * The live list from GET /v1/voices wins (see parseVoiceList), so a voice added on the server
+ * works without a new MCP release; this copy covers startup text and an unreachable API.
+ * `instruct` is the style hint Voice Studio sends with each one.
  */
 export interface TapraVoice {
   id: string;
@@ -95,15 +96,64 @@ export const DEFAULT_VOICE_ID = 'youssef';
 
 export const VOICE_IDS = VOICES.map((v) => v.id) as [string, ...string[]];
 
-export const CLONING_UNAVAILABLE =
-  'Voice cloning is not currently available in Tapra. Choose one of the Tapra voices instead: ' +
-  VOICES.map((v) => `${v.name} (${v.description.split('.')[0]!.toLowerCase()})`).join(', ') +
-  '.';
+export const CLONING_UNAVAILABLE = cloningUnavailable(VOICES);
 
-export function voiceById(id: string): TapraVoice {
-  const voice = VOICES.find((v) => v.id === id.trim().toLowerCase());
-  if (!voice) throw new Error(`Unknown voice "${id}". Available: ${VOICE_IDS.join(', ')}.`);
+export function voiceById(id: string, voices: readonly TapraVoice[] = VOICES): TapraVoice {
+  const voice = voices.find((v) => v.id === id.trim().toLowerCase());
+  if (!voice) throw new Error(`Unknown voice "${id}". Available: ${voices.map((v) => v.id).join(', ')}.`);
   return voice;
+}
+
+/** A built-in voice by id, or undefined (no network). */
+export function builtinVoice(id: string): TapraVoice | undefined {
+  return VOICES.find((v) => v.id === id.trim().toLowerCase());
+}
+
+/** Display name for a voice id: the built-in name, else the id capitalised. */
+export function voiceName(id: string): string {
+  const clean = id.trim().toLowerCase();
+  return builtinVoice(clean)?.name ?? clean.charAt(0).toUpperCase() + clean.slice(1);
+}
+
+export interface VoiceList {
+  voices: TapraVoice[];
+  defaultId: string;
+}
+
+/**
+ * GET /v1/voices body `{default, data: [{name, gender, description}]}` -> voices, keeping the
+ * built-in style hint for voices it already knows. Undefined when the body has no usable voice.
+ */
+export function parseVoiceList(body: unknown): VoiceList | undefined {
+  const data = (body as { data?: unknown } | null)?.data;
+  if (!Array.isArray(data)) return undefined;
+  const voices: TapraVoice[] = [];
+  for (const item of data) {
+    const id = String((item as { name?: unknown } | null)?.name ?? '').trim().toLowerCase();
+    if (!/^[a-z][a-z0-9_-]{0,31}$/.test(id) || voices.some((v) => v.id === id)) continue;
+    const known = builtinVoice(id);
+    const gender = String((item as { gender?: unknown }).gender ?? '').toLowerCase();
+    const description = String((item as { description?: unknown }).description ?? '').trim();
+    voices.push({
+      id,
+      name: voiceName(id),
+      gender: gender === 'female' || gender === 'male' ? gender : (known?.gender ?? 'male'),
+      description: description || known?.description || '',
+      instruct: known?.instruct ?? ''
+    });
+  }
+  if (!voices.length) return undefined;
+  const wanted = String((body as { default?: unknown }).default ?? '').trim().toLowerCase();
+  return { voices, defaultId: voices.some((v) => v.id === wanted) ? wanted : voices[0]!.id };
+}
+
+/** The cloning answer for a given voice list. */
+export function cloningUnavailable(voices: readonly TapraVoice[]): string {
+  return (
+    'Voice cloning is not currently available in Tapra. Choose one of the Tapra voices instead: ' +
+    voices.map((v) => `${v.name} (${(v.description.split('.')[0] || (v.gender === 'female' ? 'Woman' : 'Man')).toLowerCase()})`).join(', ') +
+    '.'
+  );
 }
 
 /** One line per voice, for tool descriptions. */

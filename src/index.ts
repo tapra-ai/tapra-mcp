@@ -21,7 +21,8 @@ const server = new McpServer(
         : `Results are saved in ${config.outputDir}; existing files are never overwritten. `) +
       'For subtitles use transcribe_video; to dub, translate_subtitles then create_voiceover; edit_audio prepares audio; ' +
       'play_audio plays results; find_in_transcript finds when something is said; call tapra_status if anything fails. ' +
-      `Voices: ${voiceMenu()}. Voice cloning is not currently available; if asked to clone a voice, say so and offer these voices.`
+      `Voices: ${voiceMenu()}. list_voices has the current list, which can include newer voices. ` +
+      'Voice cloning is not currently available; if asked to clone a voice, say so and offer these voices.'
   }
 );
 
