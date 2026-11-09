@@ -48,7 +48,9 @@ describe('discovery and free tools', () => {
     }
     for (const free of ['tapra_status', 'list_voices', 'get_balance']) assert.equal(byName[free].annotations.readOnlyHint, true);
     const tts = byName.text_to_speech;
-    assert.deepEqual(tts.inputSchema.properties.voice.enum, ['youssef', 'zeineb', 'karim', 'sarra', 'anis', 'rim', 'hamza', 'mariem', 'mehdi', 'ines', 'walid']);
+    // A free-form name, so voices added on the server work; the built-in ones are in the description.
+    assert.equal(tts.inputSchema.properties.voice.type, 'string');
+    assert.match(tts.inputSchema.properties.voice.description, /youssef = .*walid = /);
     assert.ok(!('voice_reference_path' in tts.inputSchema.properties), 'cloning input must be gone');
     assert.match(tts.description, /cloning .* not currently available/i);
   });
@@ -63,7 +65,7 @@ describe('discovery and free tools', () => {
     assert.match(r.text, new RegExp(`API: ${mock.url.replace(/[.]/g, '\\.')} \\(from website\\)`));
     assert.match(r.text, /Balance: 9\.500 TND/);
     assert.match(r.text, /Models: tapra-scribe-v1, tapra-speak-v1/);
-    assert.match(r.text, /Voices: youssef, zeineb, karim, sarra, anis, rim, hamza, mariem, mehdi, ines, walid \(cloning not available\)/);
+    assert.match(r.text, /Voices: youssef, zeineb, karim, sarra, anis, rim, hamza, mariem, mehdi, ines, walid, nour \(cloning not available\)/);
   });
 
   test('list_voices describes each voice and refuses cloning', async () => {
@@ -74,6 +76,14 @@ describe('discovery and free tools', () => {
     assert.match(r.text, /Walid \(voice: "walid", male\)/);
     assert.match(r.text, /Youssef .*default.*Man/);
     assert.match(r.text, /Voice cloning is not currently available/);
+  });
+
+  test('list_voices reads the live server list, including voices the MCP does not ship', async () => {
+    const r = await tapra.call('list_voices');
+    assert.match(r.text, /Nour \(voice: "nour", female\): Woman\. Bright\./);
+    assert.match(r.text, /Nour \(woman\)/);
+    assert.doesNotMatch(r.text, /built-in list/);
+    assert.ok(mock.calls('/v1/voices').length >= 1);
   });
 
   test('get_balance reads the account with the API key', async () => {
@@ -105,6 +115,15 @@ describe('speech', () => {
     assert.equal(mock.calls('/v1/audio/speech').at(-1).fields.voice, 'youssef');
     await tapra.call('text_to_speech', { text: 'Ahla', voice: 'karim', quality: 'flash' });
     assert.equal(mock.calls('/v1/audio/speech').at(-1).fields.model, 'tapra-speak-flash-v1');
+  });
+
+  test('a voice only the server knows is sent as-is, without a style hint', async () => {
+    const r = await tapra.call('text_to_speech', { text: 'Ahla', voice: 'Nour' });
+    assert.equal(r.isError, false, r.text);
+    assert.match(r.text, /Voice: Nour /);
+    const sent = mock.calls('/v1/audio/speech').at(-1);
+    assert.equal(sent.fields.voice, 'nour');
+    assert.ok(!('instruct' in sent.fields));
   });
 
   test('unknown voices are rejected before any charge', async () => {

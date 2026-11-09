@@ -105,3 +105,25 @@ test('eleven named voices; unknown names and cloning are refused', () => {
   assert.match(CLONING_UNAVAILABLE, /not currently available/);
   for (const v of VOICES) assert.ok(CLONING_UNAVAILABLE.includes(v.name));
 });
+
+test('parseVoiceList keeps built-in style hints, adds new voices, fixes the default', async () => {
+  const { parseVoiceList, cloningUnavailable } = await import('../dist/voices.js');
+  const list = parseVoiceList({
+    default: 'leo',
+    data: [
+      { name: 'Sarra', gender: 'female', description: 'Woman. Clear.' },
+      { name: 'nour', gender: 'female', description: 'Woman. Bright.' },
+      { name: 'sarra', gender: 'female' },
+      { name: '../bad' },
+      null
+    ]
+  });
+  assert.deepEqual(list.voices.map((v) => v.id), ['sarra', 'nour']);
+  assert.equal(list.voices[0].instruct, 'Female, Young Adult, Moderate Pitch');
+  assert.equal(list.voices[1].instruct, '');
+  assert.equal(list.voices[1].name, 'Nour');
+  assert.equal(list.defaultId, 'sarra');
+  assert.equal(parseVoiceList({ data: [] }), undefined);
+  assert.equal(parseVoiceList(null), undefined);
+  assert.match(cloningUnavailable(list.voices), /Nour \(woman\)/);
+});

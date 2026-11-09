@@ -28,6 +28,20 @@ function price(model, unit, unitsPerChargeUnit, microTndPerUnit) {
   return { model, unit, unitsPerChargeUnit, tndPerUnit: tnd, usdPerUnit: tnd / 3, microTndPerUnit, minimumTnd: 0.00295, minimumUsd: 0.001 };
 }
 
+// GET /v1/voices as the gateway serves it: the built-in voices plus one only the server knows.
+const VOICE_LIST = {
+  object: 'list',
+  default: 'youssef',
+  data: [
+    ...['youssef', 'zeineb', 'karim', 'sarra', 'anis', 'rim', 'hamza', 'mariem', 'mehdi', 'ines', 'walid'].map((name, i) => ({
+      name,
+      gender: ['zeineb', 'sarra', 'rim', 'mariem', 'ines'].includes(name) ? 'female' : 'male',
+      description: { youssef: 'Man. The default Tapra voice.', zeineb: 'Woman. A warm storyteller, made for narration.', karim: 'Man. Calm.', sarra: 'Woman. Clear.' }[name] ?? (['zeineb', 'sarra', 'rim', 'mariem', 'ines'].includes(name) ? 'Woman.' : 'Man.')
+    })),
+    { name: 'nour', gender: 'female', description: 'Woman. Bright.' }
+  ]
+};
+
 const usage = (costTnd) => ({ status: 'ok', requestId: 'req_test', costTnd, balanceTnd: 9.5 });
 
 /** Mono 16-bit sine WAV. */
@@ -83,6 +97,7 @@ export async function startMock() {
         if (url === '/api/pricing') return json(PRICES);
         if (url === '/api/openapi') return json({ openapi: '3.1.0', servers: [{ url: `http://127.0.0.1:${server.address().port}` }] });
         if (url === '/v1/models') return json({ object: 'list', data: [{ id: 'tapra-scribe-v1' }, { id: 'tapra-speak-v1' }] });
+        if (url === '/v1/voices') return json(VOICE_LIST);
         if (url === '/api/v1/account') {
           if (!authed) return denied();
           return json({

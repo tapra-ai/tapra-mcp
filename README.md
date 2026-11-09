@@ -94,7 +94,9 @@ and are not billed: `[euh]` hesitation, `[aaa]` long filler, `[hmm]`, `[ahem]` t
 `[ouf]` sigh, `[breath]` out-breath, `[stutter]` (right before the word to stutter), e.g.
 `"[euh] ma na3rafch, [breath] khalli nchouf"`. Unknown tags are refused before any charge.
 
-`quality: "flash"` uses the same voices about 5x faster and cheaper. Voice cloning is not
+`list_voices` reads the current list from the API (`GET /v1/voices`), so voices added on the
+server work without updating the MCP; the table above is the built-in copy used when the API
+cannot be reached. `quality: "flash"` uses the same voices about 5x faster and cheaper. Voice cloning is not
 currently available; the server tells the model so, and it should offer these voices instead.
 
 ### Audio formats

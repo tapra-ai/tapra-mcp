@@ -28,19 +28,55 @@ import {
   type MergedTranscript
 } from './tapra.js';
 import {
-  CLONING_UNAVAILABLE,
+  builtinVoice,
+  cloningUnavailable,
   DEFAULT_VOICE_ID,
   effectsMenu,
   EMOTION_IDS,
   emotionsMenu,
+  parseVoiceList,
   SPEECH_MODELS,
   stripEffectTags,
   unknownEffectTags,
-  VOICE_IDS,
   VOICES,
   voiceById,
-  voiceMenu
+  voiceMenu,
+  voiceName,
+  type TapraVoice,
+  type VoiceList
 } from './voices.js';
+
+// ---------------------------------------------------------------------------
+// Voices: the live list from GET /v1/voices (free), cached for an hour
+// ---------------------------------------------------------------------------
+
+const VOICES_TTL_MS = 60 * 60 * 1000;
+let voicesCache: { at: number; list: VoiceList } | undefined;
+
+/**
+ * The server's voices. When the API cannot be reached: the last list it gave, then the built-in one
+ * (`live` false), so listing voices never fails.
+ */
+async function getVoices(): Promise<VoiceList & { live: boolean }> {
+  if (voicesCache && Date.now() - voicesCache.at < VOICES_TTL_MS) return { ...voicesCache.list, live: true };
+  try {
+    const res = await client.fetch('/v1/voices', { method: 'GET' }, { timeoutInSeconds: 8, maxRetries: 0 });
+    const list = res.ok ? parseVoiceList(await res.json().catch(() => null)) : undefined;
+    if (list) {
+      voicesCache = { at: Date.now(), list };
+      return { ...list, live: true };
+    }
+  } catch {
+    // offline or Speak host stopped: fall through
+  }
+  if (voicesCache) return { ...voicesCache.list, live: true };
+  return { voices: [...VOICES], defaultId: DEFAULT_VOICE_ID, live: false };
+}
+
+/** A built-in voice needs no network call; any other name is checked against the live list. */
+async function resolveVoice(id: string): Promise<TapraVoice> {
+  return builtinVoice(id) ?? voiceById(id, (await getVoices()).voices);
+}
 
 // ---------------------------------------------------------------------------
 // Speech synthesis shared by text_to_speech and create_voiceover
@@ -56,9 +92,11 @@ const DERJA_SCRIPT_HINT =
 
 const voiceShape = {
   voice: z
-    .enum(VOICE_IDS)
+    .string()
+    .trim()
+    .toLowerCase()
     .default(DEFAULT_VOICE_ID)
-    .describe(`Tapra voice: ${voiceMenu()}. Voice cloning is not available.`),
+    .describe(`Tapra voice: ${voiceMenu()}. list_voices has the current list. Voice cloning is not available.`),
   quality: z
     .enum(['full', 'flash'])
     .default('full')
@@ -93,7 +131,7 @@ type VoiceArgs = {
  * field, so this goes through the SDK's raw fetch (same auth, retries, base URL).
  */
 async function synthesize(text: string, args: VoiceArgs, durationSeconds?: number): Promise<Tapra.Speech> {
-  const voice = voiceById(args.voice);
+  const voice = await resolveVoice(args.voice);
   const unknown = unknownEffectTags(text);
   if (unknown.length) {
     throw new Error(`Unknown effect tag${unknown.length > 1 ? 's' : ''}: ${unknown.map((t) => `[${t}]`).join(', ')}. Available: ${effectsMenu()}.`);
@@ -384,7 +422,7 @@ export function registerTools(server: McpServer): void {
           `Output mode: ${config.outputMode}${config.outputMode === 'files' ? '' : ` (files up to ${Math.round(config.maxInlineBytes / 1048576)} MB returned inline)`}`,
           `Output folder: ${config.outputDir}${config.outputMode === 'resources' ? ' (temporary)' : ''}`,
           `Input folder (files must be inside): ${config.basePath}`,
-          `Voices: ${VOICES.map((v) => v.id).join(', ')} (cloning not available)`,
+          `Voices: ${(await getVoices()).voices.map((v) => v.id).join(', ')} (cloning not available)`,
           `ffmpeg: ${(await hasFfmpeg()) ? 'available' : 'NOT found (video tools, chunking and cost estimates for audio need it)'}`,
           `Max cost per call: ${config.maxCostTnd ? `${formatTnd(config.maxCostTnd)} (TAPRA_MAX_COST_TND)` : `${formatTnd(DEFAULT_MAX_COST_TND)} (default; set TAPRA_MAX_COST_TND to change)`}`
         ];
@@ -430,17 +468,19 @@ export function registerTools(server: McpServer): void {
         'List the Tapra voices for text_to_speech and create_voiceover, with a description of each. Free. ' +
         'Also answers questions about voice cloning, which is not currently available.',
       inputSchema: {},
-      annotations: { ...READ_ONLY, openWorldHint: false }
+      annotations: READ_ONLY
     },
     () =>
-      run(async () =>
-        [
-          ...VOICES.map((v) => `${v.name} (voice: "${v.id}", ${v.gender}${v.id === DEFAULT_VOICE_ID ? ', default' : ''}): ${v.description}`),
+      run(async () => {
+        const { voices, defaultId, live } = await getVoices();
+        return [
+          ...voices.map((v) => `${v.name} (voice: "${v.id}", ${v.gender}${v.id === defaultId ? ', default' : ''}): ${v.description}`),
           '',
           'Quality: "full" (best) or "flash" (same voices, about 5x faster, cheaper).',
-          CLONING_UNAVAILABLE
-        ].join('\n')
-      )
+          ...(live ? [] : ['The Tapra API could not be reached, so this is the built-in list; newer voices may be missing.']),
+          cloningUnavailable(voices)
+        ].join('\n');
+      })
   );
 
   server.registerTool(
@@ -732,7 +772,7 @@ export function registerTools(server: McpServer): void {
           text: [
             `Saved ${res.duration.toFixed(2)} s of audio (${args.format}) to: ${out}`,
             spend.summary(),
-            `Voice: ${voiceById(args.voice).name} (${args.quality === 'flash' ? 'Flash' : 'full quality'})`,
+            `Voice: ${voiceName(args.voice)} (${args.quality === 'flash' ? 'Flash' : 'full quality'})`,
             res.spoken_text && res.spoken_text !== res.text ? `Spoken as: ${res.spoken_text}` : ''
           ]
             .filter(Boolean)
@@ -875,7 +915,7 @@ export function registerTools(server: McpServer): void {
                 sample_rate: sampleRate,
                 duration: +totalSeconds.toFixed(3),
                 timing: timed ? (args.timing === 'fit' ? 'fit-to-subtitles' : 'subtitle-start') : 'sequential',
-                voice: { id: args.voice, name: voiceById(args.voice).name, model: SPEECH_MODELS[args.quality] },
+                voice: { id: args.voice, name: voiceName(args.voice), model: SPEECH_MODELS[args.quality] },
                 segments: manifest
               },
               null,
@@ -889,7 +929,7 @@ export function registerTools(server: McpServer): void {
             spend.summary(),
             `Folder: ${outDir}`,
             `  ${trackName}, manifest.json, clips/001.wav...`,
-            `Voice: ${voiceById(args.voice).name}`
+            `Voice: ${voiceName(args.voice)}`
           ];
           const files = [trackPath, manifestPath];
 
