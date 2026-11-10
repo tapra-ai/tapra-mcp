@@ -1,6 +1,6 @@
 {
   "name": "@tapra/mcp",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "Tapra MCP server: Tunisian Derja/French/English transcription, speech, voiceovers, translation, and Arabizi conversion for Claude, Cursor, and other MCP clients.",
   "mcpName": "io.github.tapra-ai/tapra-mcp",
   "license": "MIT",
@@ -48,7 +48,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",
-    "@tapra/sdk": "^0.1.2",
+    "@tapra/sdk": "^0.1.8",
     "zod": "^3.25.76"
   },
   "devDependencies": {
