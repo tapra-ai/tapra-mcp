@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { estimateCostTnd, fetchTapraPrices, TapraClient, TapraError, type Tapra, type TapraPrices } from '@tapra/sdk';
 import { config, FALLBACK_API_URL } from './config.js';
+import { speechCostMicroTnd } from './pricing.js';
 import { extractWav16k, hasFfmpeg, makeTempDir, probe, removeDir, wavSeconds } from './media.js';
 import { linkSpeakers, renumberSpeakers } from './speakers.js';
 
@@ -145,6 +146,16 @@ export async function estimate(service: string, quantity: number, multiplier = 1
   try {
     const prices = await getPrices();
     return estimateCostTnd(prices, service, quantity) * multiplier;
+  } catch {
+    return null;
+  }
+}
+
+/** Estimate the exact requests that will be sent; sum micro-TND before converting. */
+export async function estimateSpeech(texts: readonly string[], flash = false): Promise<number | null> {
+  try {
+    const prices = await getPrices();
+    return speechCostMicroTnd(prices, texts, flash) / prices.microTndPerTnd;
   } catch {
     return null;
   }

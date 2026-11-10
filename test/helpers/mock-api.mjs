@@ -4,28 +4,30 @@ import http from 'node:http';
 
 export const TEST_KEY = 'tapra_sk_live_test_0123456789abcdefghijklmnopqrstuv';
 
-const PRICES = {
+export const PRICES = {
   version: 'test',
   currency: 'TND',
   tndPerUsd: 3,
   rateDate: null,
   rateSource: 'fallback',
   microTndPerTnd: 1_000_000,
-  minimumChargeMicroTnd: 2950,
+  minimumChargeMicroTnd: 3000,
   welcomeCreditTnd: 2,
   topUpPackagesTnd: [10],
-  ttsFlashMultiplier: 0.8,
+  ttsFlashTndPerUnit: 0.3,
+  ttsFlashMicroTndPerUnit: 300000,
+  ttsFlashMultiplier: 300000 / 420000,
   services: {
-    offline: price('tapra-scribe-v1', 'audio_ms', 60000, 150000),
-    tts: price('tapra-speak-v1', 'characters', 1000, 200000),
-    mt: price('tapra-translate-v1', 'characters', 1000, 150000),
-    converter: price('tapra-flip-v1', 'characters', 1000, 100000)
+    offline: price('tapra-scribe-v1', 'audio_ms', 60000, 180000),
+    tts: price('tapra-speak-v1', 'characters', 1000, 420000),
+    mt: price('tapra-translate-v1', 'characters', 1000, 180000),
+    converter: price('tapra-flip-v1', 'characters', 1000, 120000)
   }
 };
 
 function price(model, unit, unitsPerChargeUnit, microTndPerUnit) {
   const tnd = microTndPerUnit / 1e6;
-  return { model, unit, unitsPerChargeUnit, tndPerUnit: tnd, usdPerUnit: tnd / 3, microTndPerUnit, minimumTnd: 0.00295, minimumUsd: 0.001 };
+  return { model, unit, unitsPerChargeUnit, tndPerUnit: tnd, usdPerUnit: tnd / 3, microTndPerUnit, minimumTnd: 0.003, minimumUsd: 0.001 };
 }
 
 // GET /v1/voices as the gateway serves it: the built-in voices plus one only the server knows.
@@ -153,7 +155,11 @@ export async function startMock() {
             converted: false,
             processing_ms: 5,
             model: fields.model,
-            usage: usage(0.01)
+            usage: usage(Math.max(
+              PRICES.minimumChargeMicroTnd,
+              Math.ceil([...fields.input.normalize('NFC').trim()].length *
+                (fields.model === 'tapra-speak-flash-v1' ? PRICES.ttsFlashMicroTndPerUnit : PRICES.services.tts.microTndPerUnit) / 1000)
+            ) / PRICES.microTndPerTnd)
           });
         }
         if (url === '/v1/translations/languages') {

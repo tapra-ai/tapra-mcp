@@ -59,7 +59,7 @@ after(async () => {
 });
 
 describe('speech options', () => {
-  test('effect tags are passed through, not billed, and documented', async () => {
+  test('effect tags are passed through, billed, and documented', async () => {
     const { tools } = await tapra.client.listTools();
     const tts = tools.find((t) => t.name === 'text_to_speech');
     for (const tag of ['euh', 'aaa', 'hmm', 'ahem', 'ouf', 'breath', 'stutter']) assert.ok(tts.description.includes(`[${tag}]`), tag);

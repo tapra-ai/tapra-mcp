@@ -17,6 +17,7 @@ import {
   client,
   describeError,
   estimate,
+  estimateSpeech,
   formatTnd,
   getAccount,
   getApiUrl,
@@ -36,7 +37,6 @@ import {
   emotionsMenu,
   parseVoiceList,
   SPEECH_MODELS,
-  stripEffectTags,
   unknownEffectTags,
   VOICES,
   voiceById,
@@ -164,20 +164,6 @@ async function synthesize(text: string, args: VoiceArgs, durationSeconds?: numbe
     });
   }
   return body;
-}
-
-async function ttsEstimate(characters: number, quality: 'full' | 'flash', requests = 1): Promise<number | null> {
-  let multiplier = 1;
-  if (quality === 'flash') {
-    try {
-      multiplier = (await getPrices()).ttsFlashMultiplier;
-    } catch {
-      // Estimate stays unadjusted when the price list is unreachable.
-    }
-  }
-  // Each request has its own minimum charge, so estimate per line.
-  const per = await estimate('tts', Math.ceil(characters / requests), multiplier);
-  return per === null ? null : per * requests;
 }
 
 const EFFECT_TAGS = effectsMenu();
@@ -762,7 +748,7 @@ export function registerTools(server: McpServer): void {
       run(async () => {
         requireApiKey();
         if (needsFfmpeg(args.format)) await requireFfmpeg(`The ${args.format} format`);
-        checkBudget(await ttsEstimate(stripEffectTags(args.text).length, args.quality), args.max_cost_tnd, 'This speech');
+        checkBudget(await estimateSpeech([args.text], args.quality === 'flash'), args.max_cost_tnd, 'This speech');
         const res = await synthesize(args.text, args, args.duration_seconds);
         const out = resolveOutput(args.output_path, 'speech', extensionFor(args.format));
         await saveAudio(Buffer.from(res.audio, 'base64'), args.format, out);
@@ -840,8 +826,7 @@ export function registerTools(server: McpServer): void {
           if (unknown.length) throw new Error(`Unknown effect tag [${unknown[0]}] in "${item.text}". Available: ${EFFECT_TAGS}.`);
         }
 
-        const chars = items.reduce((n, i) => n + stripEffectTags(i.text).length, 0);
-        checkBudget(await ttsEstimate(chars, args.quality, items.length), args.max_cost_tnd, `A ${items.length}-line voiceover`);
+        checkBudget(await estimateSpeech(items.map((item) => item.text), args.quality === 'flash'), args.max_cost_tnd, `A ${items.length}-line voiceover`);
 
         let video: string | undefined;
         let videoDuration = 0;
