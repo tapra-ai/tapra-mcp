@@ -2,14 +2,14 @@
 import fs from 'node:fs';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { config } from './config.js';
+import { config, translateEnabled } from './config.js';
 import { registerOutputResources } from './output.js';
 import { registerExtraTools } from './tools-extra.js';
 import { registerTools } from './tools.js';
 import { voiceMenu } from './voices.js';
 
 const server = new McpServer(
-  { name: 'tapra', title: 'Tapra', version: '0.1.7' },
+  { name: 'tapra', title: 'Tapra', version: '0.1.9' },
   {
     instructions:
       'Tapra speech and language tools for Tunisian Derja code-switched with French and English. ' +
@@ -19,7 +19,9 @@ const server = new McpServer(
       (config.outputMode === 'resources'
         ? 'Results come back inline as tapra://output resources. '
         : `Results are saved in ${config.outputDir}; existing files are never overwritten. `) +
-      'For subtitles use transcribe_video; to dub, translate_subtitles then create_voiceover; edit_audio prepares audio; ' +
+      (translateEnabled()
+        ? 'For subtitles use transcribe_video; to dub, translate_subtitles then create_voiceover; edit_audio prepares audio; '
+        : 'For subtitles use transcribe_video; create_voiceover speaks a script or subtitle file; edit_audio prepares audio; ') +
       'play_audio plays results; find_in_transcript finds when something is said; call tapra_status if anything fails. ' +
       `Voices: ${voiceMenu()}. list_voices has the current list, which can include newer voices. ` +
       'Voice cloning is not currently available; if asked to clone a voice, say so and offer these voices.'

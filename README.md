@@ -8,7 +8,7 @@ Setup guide for every app: **[tapra.tn/mcp](https://tapra.tn/mcp)** · API refer
 
 Use Tapra from Claude Desktop, Claude Code, Cursor, or any MCP client: transcribe Tunisian
 Derja mixed with French and English, subtitle videos, generate speech and voiceovers,
-translate, and convert between Arabizi and Arabic script.
+and convert between Arabizi and Arabic script.
 
 The server runs locally over stdio. It reads your media files, calls the Tapra API with your
 key, and writes results to your output folder. Calls are billed like the API, and every paid
@@ -57,12 +57,9 @@ claude mcp add tapra -e TAPRA_API_KEY=tapra_sk_live_… -- npx -y @tapra/mcp
 | `diarize_audio` | Who spoke when, without a transcript | per minute |
 | `text_to_speech` | Speak Derja / Arabizi / French / English with a Tapra voice, effect tags, 19 formats | per character |
 | `create_voiceover` | Narration from a script, or dubbing from an SRT, on one timeline; writes the track, per-line clips and `manifest.json`; can lay it onto a video | per character |
-| `translate` | Derja ↔ English / French / MSA | per character |
-| `translate_subtitles` | Translate an SRT/VTT, keeping every timing and speaker label (batched) | per character |
 | `play_audio` | Play a file on this computer's speakers (or stop playback) | free |
 | `find_in_transcript` | When is a word or phrase said? Word-level times from a JSON transcript | free |
 | `edit_audio` | Join, trim, remove silences, normalize loudness, fade, convert | free |
-| `list_translation_languages` | Accepted language names | free |
 | `convert_script` | Arabizi ↔ Arabic script | per character |
 
 Example prompts:
@@ -70,7 +67,6 @@ Example prompts:
 - "Subtitle ~/Videos/interview.mp4 with speaker labels and burn them in."
 - "Write a 30-second Derja ad for a coffee shop, then make a voiceover with a warm female voice."
 - "Narrate this script with Zeineb, then lay it onto ~/Videos/promo.mp4."
-- "Subtitle interview.mp4, translate the subtitles to French, and dub it with Karim."
 - "Where does she say 'el budget' in interview.json? Cut 5 seconds around it and normalize to -14 LUFS."
 
 ### Voices
@@ -109,7 +105,7 @@ mp3, opus, ulaw and alaw need ffmpeg.
 
 ### Progress
 
-`speech_to_text`, `transcribe_video`, `create_voiceover`, `translate_subtitles` and `edit_audio`
+`speech_to_text`, `transcribe_video`, `create_voiceover` and `edit_audio`
 send MCP progress notifications (per chunk, line or batch) when the client asks for them, so long
 jobs show progress and do not time out.
 

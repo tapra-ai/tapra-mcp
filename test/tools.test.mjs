@@ -36,6 +36,21 @@ after(async () => {
 
 const outFiles = () => fs.readdirSync(folders.output);
 
+describe('Translate while the service is offline', () => {
+  test('its tools and the mention in the instructions are hidden by default', async () => {
+    const hidden = await startServer(mock, folders, { TAPRA_ENABLE_TRANSLATE: '' });
+    try {
+      const { tools } = await hidden.client.listTools();
+      const names = tools.map((t) => t.name);
+      for (const gone of ['translate', 'list_translation_languages', 'translate_subtitles']) assert.ok(!names.includes(gone), `${gone} should be hidden`);
+      assert.ok(names.includes('convert_script') && names.includes('create_voiceover'));
+      assert.doesNotMatch(hidden.client.getInstructions() ?? '', /translate/i);
+    } finally {
+      await hidden.close();
+    }
+  });
+});
+
 describe('discovery and free tools', () => {
   test('lists every tool with honest cost hints', async () => {
     const { tools } = await tapra.client.listTools();

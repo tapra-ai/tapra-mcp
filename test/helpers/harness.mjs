@@ -48,6 +48,7 @@ export async function startServer(mock, folders, env = {}) {
       TAPRA_API_URL: '',
       TAPRA_MAX_COST_TND: '',
       TAPRA_MCP_OUTPUT_MODE: '',
+      TAPRA_ENABLE_TRANSLATE: '1',
       ...env
     }
   });

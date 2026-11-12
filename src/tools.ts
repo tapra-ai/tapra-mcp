@@ -3,7 +3,7 @@ import path from 'node:path';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { TapraError, type Tapra } from '@tapra/sdk';
 import { z } from 'zod';
-import { config, maskedKey, resolveInput, resolveOutput, resolveOutputDir } from './config.js';
+import { config, translateEnabled, maskedKey, resolveInput, resolveOutput, resolveOutputDir } from './config.js';
 import { decodeWav, encodeWav, extractWav16k, ffmpeg, hasFfmpeg, hasFfmpegFilter, makeTempDir, mixAt, probe, removeDir, requireFfmpeg, type MonoAudio } from './media.js';
 import { encodeAudio, extensionFor, formatSchema, needsFfmpeg, type AudioFormat } from './formats.js';
 import { inline, LOCAL_WRITE, maxCost, PAID, progressFrom, READ_ONLY, run, type Progress } from './toolkit.js';
@@ -949,51 +949,57 @@ export function registerTools(server: McpServer): void {
       })
   );
 
-  server.registerTool(
-    'translate',
-    {
-      title: 'Translate',
-      description:
-        'Translate between Tunisian Derja and English, French, or Modern Standard Arabic (in both directions). ' +
-        'Call list_translation_languages for the exact target names. Costs money per character.',
-      inputSchema: {
-        text: z.string().min(1).max(20_000),
-        target: z.string().describe('Target language, e.g. "Derja", "French", "English", "MSA".'),
-        source: z.string().optional().describe('Source language. Usually auto-detected.'),
-        max_cost_tnd: maxCost
+  // Hidden while Tapra-Translate is offline (set TAPRA_ENABLE_TRANSLATE=1 to list it).
+  if (translateEnabled()) {
+    server.registerTool(
+      'translate',
+      {
+        title: 'Translate',
+        description:
+          'Translate between Tunisian Derja and English, French, or Modern Standard Arabic (in both directions). ' +
+          'Call list_translation_languages for the exact target names. Costs money per character.',
+        inputSchema: {
+          text: z.string().min(1).max(20_000),
+          target: z.string().describe('Target language, e.g. "Derja", "French", "English", "MSA".'),
+          source: z.string().optional().describe('Source language. Usually auto-detected.'),
+          max_cost_tnd: maxCost
+        },
+        annotations: PAID
       },
-      annotations: PAID
-    },
-    (args) =>
-      run(async () => {
-        requireApiKey();
-        checkBudget(await estimate('mt', args.text.length), args.max_cost_tnd, 'This translation');
-        const res = await client.translations.create(
-          { input: args.text, target: args.target, ...(args.source ? { source: args.source } : {}) },
-          requestOptions()
-        );
-        const spend = new Spend();
-        spend.add(res.usage);
-        const from = res.source_language ? `${res.source_language} → ` : '';
-        return `${res.translation}\n\n(${from}${res.target_language ?? res.target}. ${spend.summary()})`;
-      })
-  );
+      (args) =>
+        run(async () => {
+          requireApiKey();
+          checkBudget(await estimate('mt', args.text.length), args.max_cost_tnd, 'This translation');
+          const res = await client.translations.create(
+            { input: args.text, target: args.target, ...(args.source ? { source: args.source } : {}) },
+            requestOptions()
+          );
+          const spend = new Spend();
+          spend.add(res.usage);
+          const from = res.source_language ? `${res.source_language} → ` : '';
+          return `${res.translation}\n\n(${from}${res.target_language ?? res.target}. ${spend.summary()})`;
+        })
+    );
+  }
 
-  server.registerTool(
-    'list_translation_languages',
-    {
-      title: 'Translation languages',
-      description: 'List the languages translate accepts as source and target. Free.',
-      inputSchema: {},
-      annotations: READ_ONLY
-    },
-    () =>
-      run(async () => {
-        requireApiKey();
-        const res = await client.translations.listLanguages({ timeoutInSeconds: 30 });
-        return res.data.map((l) => `${l.label} (${l.code}${l.rtl ? ', right-to-left' : ''})`).join('\n');
-      })
-  );
+  // Hidden while Tapra-Translate is offline (set TAPRA_ENABLE_TRANSLATE=1 to list it).
+  if (translateEnabled()) {
+    server.registerTool(
+      'list_translation_languages',
+      {
+        title: 'Translation languages',
+        description: 'List the languages translate accepts as source and target. Free.',
+        inputSchema: {},
+        annotations: READ_ONLY
+      },
+      () =>
+        run(async () => {
+          requireApiKey();
+          const res = await client.translations.listLanguages({ timeoutInSeconds: 30 });
+          return res.data.map((l) => `${l.label} (${l.code}${l.rtl ? ', right-to-left' : ''})`).join('\n');
+        })
+    );
+  }
 
   server.registerTool(
     'convert_script',
