@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { config, resolveInput, resolveOutput, similarity } from './config.js';
+import { config, translateEnabled, resolveInput, resolveOutput, similarity } from './config.js';
 import { encodeAudio, extensionFor, formatSchema } from './formats.js';
 import { decodeWav, ffmpeg, hasFfmpeg, makeTempDir, probe, removeDir, requireFfmpeg } from './media.js';
 import { parseSubtitles, toSrt, toVtt, type Cue } from './subtitles.js';
@@ -381,99 +381,102 @@ export function registerExtraTools(server: McpServer): void {
       })
   );
 
-  server.registerTool(
-    'translate_subtitles',
-    {
-      title: 'Translate subtitles',
-      description:
-        'Translate an SRT or VTT file between Tunisian Derja and English, French, or MSA, keeping every timing and speaker ' +
-        'label. Lines are sent in batches to keep cost low. Pair with create_voiceover (srt_path) to dub a video. ' +
-        'Reports progress per batch. Costs money per character.',
-      inputSchema: {
-        input_path: z.string().describe('SRT/VTT file, e.g. from transcribe_video, or a tapra://output/... resource.'),
-        target: z.string().describe('Target language, e.g. "French", "English", "Derja", "MSA" (see list_translation_languages).'),
-        source: z.string().optional().describe('Source language. Usually auto-detected.'),
-        format: z.enum(['same', 'srt', 'vtt']).default('same'),
-        output_path: z.string().optional().describe('Where to save. Default: <name>.<target>.srt in the output folder.'),
-        max_cost_tnd: maxCost
+  // Hidden while Tapra-Translate is offline (set TAPRA_ENABLE_TRANSLATE=1 to list it).
+  if (translateEnabled()) {
+    server.registerTool(
+      'translate_subtitles',
+      {
+        title: 'Translate subtitles',
+        description:
+          'Translate an SRT or VTT file between Tunisian Derja and English, French, or MSA, keeping every timing and speaker ' +
+          'label. Lines are sent in batches to keep cost low. Pair with create_voiceover (srt_path) to dub a video. ' +
+          'Reports progress per batch. Costs money per character.',
+        inputSchema: {
+          input_path: z.string().describe('SRT/VTT file, e.g. from transcribe_video, or a tapra://output/... resource.'),
+          target: z.string().describe('Target language, e.g. "French", "English", "Derja", "MSA" (see list_translation_languages).'),
+          source: z.string().optional().describe('Source language. Usually auto-detected.'),
+          format: z.enum(['same', 'srt', 'vtt']).default('same'),
+          output_path: z.string().optional().describe('Where to save. Default: <name>.<target>.srt in the output folder.'),
+          max_cost_tnd: maxCost
+        },
+        annotations: PAID
       },
-      annotations: PAID
-    },
-    (args, extra) =>
-      run(async () => {
-        requireApiKey();
-        const progress = progressFrom(extra);
-        const input = resolveInput(args.input_path, 'subtitles', { allowOutputs: true });
-        const cues: Cue[] = parseSubtitles(fs.readFileSync(input, 'utf8')).map((c) => {
-          const m = /^\[([^\]]+)\]\s*(.*)$/.exec(c.text);
-          return m ? { ...c, speaker: m[1]!, text: m[2]! } : c;
-        });
-        if (!cues.length) throw new Error('No subtitles found in the file.');
+      (args, extra) =>
+        run(async () => {
+          requireApiKey();
+          const progress = progressFrom(extra);
+          const input = resolveInput(args.input_path, 'subtitles', { allowOutputs: true });
+          const cues: Cue[] = parseSubtitles(fs.readFileSync(input, 'utf8')).map((c) => {
+            const m = /^\[([^\]]+)\]\s*(.*)$/.exec(c.text);
+            return m ? { ...c, speaker: m[1]!, text: m[2]! } : c;
+          });
+          if (!cues.length) throw new Error('No subtitles found in the file.');
 
-        const groups = batches(cues.map((c) => c.text), 1200);
-        let estimateTnd = 0;
-        for (const g of groups) {
-          const chars = g.reduce((n, i) => n + cues[i]!.text.length + 6, 0);
-          const e = await estimate('mt', chars);
-          if (e === null) {
-            estimateTnd = Number.NaN;
-            break;
-          }
-          estimateTnd += e;
-        }
-        checkBudget(Number.isNaN(estimateTnd) ? null : estimateTnd, args.max_cost_tnd, `Translating ${cues.length} subtitles`);
-
-        const spend = new Spend();
-        const translated = new Map<number, string>();
-        let fallbacks = 0;
-        const translate = async (text: string) => {
-          const res = await client.translations.create(
-            { input: text, target: args.target, ...(args.source ? { source: args.source } : {}) },
-            requestOptions()
-          );
-          spend.add(res.usage);
-          return res.translation;
-        };
-        for (const [b, ids] of groups.entries()) {
-          progress(b, groups.length, `Translating batch ${b + 1} of ${groups.length}`);
-          try {
-            const packed = ids.map((i) => `${MARK(i)} ${cues[i]!.text}`).join('\n');
-            const got = unpack(await translate(packed), ids);
-            if (got) {
-              for (const [i, t] of got) translated.set(i, t);
-              continue;
+          const groups = batches(cues.map((c) => c.text), 1200);
+          let estimateTnd = 0;
+          for (const g of groups) {
+            const chars = g.reduce((n, i) => n + cues[i]!.text.length + 6, 0);
+            const e = await estimate('mt', chars);
+            if (e === null) {
+              estimateTnd = Number.NaN;
+              break;
             }
-            // The model merged or dropped numbered lines: redo this batch one line at a time.
-            fallbacks++;
-            for (const i of ids) translated.set(i, (await translate(cues[i]!.text)).trim());
-          } catch (err) {
-            throw new Error(`Stopped at batch ${b + 1} of ${groups.length}: ${describeError(err)} ${spend.summary()}`);
+            estimateTnd += e;
           }
-        }
-        progress(groups.length, groups.length, 'Translated');
+          checkBudget(Number.isNaN(estimateTnd) ? null : estimateTnd, args.max_cost_tnd, `Translating ${cues.length} subtitles`);
 
-        const out_cues = cues.map((c, i) => ({ ...c, text: translated.get(i) ?? c.text }));
-        const inExt = path.extname(input).toLowerCase() === '.vtt' ? 'vtt' : 'srt';
-        const fmt = args.format === 'same' ? inExt : args.format;
-        const lang = args.target.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '-').slice(0, 20);
-        const name = path.basename(input, path.extname(input));
-        // Default name: <input>.<language>.srt (a -1 suffix if it exists).
-        const out = resolveOutput(args.output_path ?? `${name}.${lang}`, `${name}.${lang}`, fmt);
-        fs.writeFileSync(out, fmt === 'vtt' ? toVtt(out_cues) : toSrt(out_cues), 'utf8');
-        return {
-          text: [
-            `Translated ${cues.length} subtitles to ${args.target} in ${groups.length} batch${groups.length === 1 ? '' : 'es'}.`,
-            spend.summary(),
-            fallbacks ? `Note: ${fallbacks} batch${fallbacks === 1 ? ' was' : 'es were'} redone line by line to keep timings aligned.` : '',
-            `Saved to: ${out}`,
-            '',
-            inline(out_cues.slice(0, 8).map((c) => `${clock(c.start)}  ${c.speaker ? `[${c.speaker}] ` : ''}${c.text}`).join('\n'))
-          ]
-            .filter((l, i) => l !== '' || i === 4)
-            .join('\n'),
-          files: [out]
-        };
-      })
-  );
+          const spend = new Spend();
+          const translated = new Map<number, string>();
+          let fallbacks = 0;
+          const translate = async (text: string) => {
+            const res = await client.translations.create(
+              { input: text, target: args.target, ...(args.source ? { source: args.source } : {}) },
+              requestOptions()
+            );
+            spend.add(res.usage);
+            return res.translation;
+          };
+          for (const [b, ids] of groups.entries()) {
+            progress(b, groups.length, `Translating batch ${b + 1} of ${groups.length}`);
+            try {
+              const packed = ids.map((i) => `${MARK(i)} ${cues[i]!.text}`).join('\n');
+              const got = unpack(await translate(packed), ids);
+              if (got) {
+                for (const [i, t] of got) translated.set(i, t);
+                continue;
+              }
+              // The model merged or dropped numbered lines: redo this batch one line at a time.
+              fallbacks++;
+              for (const i of ids) translated.set(i, (await translate(cues[i]!.text)).trim());
+            } catch (err) {
+              throw new Error(`Stopped at batch ${b + 1} of ${groups.length}: ${describeError(err)} ${spend.summary()}`);
+            }
+          }
+          progress(groups.length, groups.length, 'Translated');
+
+          const out_cues = cues.map((c, i) => ({ ...c, text: translated.get(i) ?? c.text }));
+          const inExt = path.extname(input).toLowerCase() === '.vtt' ? 'vtt' : 'srt';
+          const fmt = args.format === 'same' ? inExt : args.format;
+          const lang = args.target.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '-').slice(0, 20);
+          const name = path.basename(input, path.extname(input));
+          // Default name: <input>.<language>.srt (a -1 suffix if it exists).
+          const out = resolveOutput(args.output_path ?? `${name}.${lang}`, `${name}.${lang}`, fmt);
+          fs.writeFileSync(out, fmt === 'vtt' ? toVtt(out_cues) : toSrt(out_cues), 'utf8');
+          return {
+            text: [
+              `Translated ${cues.length} subtitles to ${args.target} in ${groups.length} batch${groups.length === 1 ? '' : 'es'}.`,
+              spend.summary(),
+              fallbacks ? `Note: ${fallbacks} batch${fallbacks === 1 ? ' was' : 'es were'} redone line by line to keep timings aligned.` : '',
+              `Saved to: ${out}`,
+              '',
+              inline(out_cues.slice(0, 8).map((c) => `${clock(c.start)}  ${c.speaker ? `[${c.speaker}] ` : ''}${c.text}`).join('\n'))
+            ]
+              .filter((l, i) => l !== '' || i === 4)
+              .join('\n'),
+            files: [out]
+          };
+        })
+    );
+  }
 }
 

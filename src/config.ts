@@ -310,3 +310,8 @@ export function maskedKey(): string {
   if (!config.apiKey) return 'not set';
   return `${config.apiKey.slice(0, 16)}…`;
 }
+
+/** Tapra-Translate is not available yet: its tools stay hidden unless TAPRA_ENABLE_TRANSLATE=1. */
+export function translateEnabled(): boolean {
+  return process.env.TAPRA_ENABLE_TRANSLATE === '1';
+}
