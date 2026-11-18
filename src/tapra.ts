@@ -249,7 +249,8 @@ export async function extractAudioWithinBudget(
 }
 
 export function formatTnd(tnd: number): string {
-  return `${tnd.toFixed(3)} TND`;
+  // Non-zero amounts under half a millime read as <0.001, never 0.000.
+  return tnd > 0 && tnd < 0.0005 ? '<0.001 TND' : `${tnd.toFixed(3)} TND`;
 }
 
 export class Spend {
