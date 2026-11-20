@@ -115,6 +115,22 @@ const voiceShape = {
     .describe(
       'Safety net for Arabizi input (e.g. "3aslema"): converts it to Arabic script before speaking. ' +
         'Write Derja in Arabic script yourself instead; the automatic conversion can misspell words.'
+    ),
+  style: z
+    .enum(['ad', 'narration', 'explainer', 'reel', 'conversation'])
+    .optional()
+    .describe(
+      'What the audio is for: sets pause lengths, pace and loudness in one choice. "ad" (tight pauses, loud), ' +
+        '"narration" (calm, long pauses), "explainer", "reel" (short pauses, a little faster), "conversation" (no change). ' +
+        'Omit for a plain read.'
+    ),
+  numbers: z
+    .enum(['derja', 'french'])
+    .optional()
+    .describe(
+      'How numbers are read: "derja" (default) or "french". Covers phone numbers, read in groups ' +
+        '(74 250 310 = أربعة و سبعين، ميتين و خمسين، ثلاثمية و عشرة, or soixante-quatorze, deux cent cinquante, trois cent dix), ' +
+        'prices, dates and model numbers (A15, 5G, 256GB are spelled out).'
     )
 };
 
@@ -124,13 +140,20 @@ type VoiceArgs = {
   speed?: number;
   emotion?: string;
   convert_arabizi: boolean;
+  style?: string;
+  numbers?: string;
 };
+
+/** Extra per-call fields: a length to fit, a register to keep (from an earlier line), word timings. */
+type SpeechExtras = { durationSeconds?: number; registerSt?: number; captions?: 'srt' };
+
+type SpeechResult = Tapra.Speech & { register_st?: number; captions?: string };
 
 /**
  * Calls /v1/audio/speech with a named voice. The generated SDK predates the `voice`
  * field, so this goes through the SDK's raw fetch (same auth, retries, base URL).
  */
-async function synthesize(text: string, args: VoiceArgs, durationSeconds?: number): Promise<Tapra.Speech> {
+async function synthesize(text: string, args: VoiceArgs, extras: SpeechExtras = {}): Promise<SpeechResult> {
   const voice = await resolveVoice(args.voice);
   const unknown = unknownEffectTags(text);
   if (unknown.length) {
@@ -146,7 +169,12 @@ async function synthesize(text: string, args: VoiceArgs, durationSeconds?: numbe
   form.append('pronunciation_style', 'tunisian');
   if (args.speed) form.append('speed', String(args.speed));
   if (args.emotion) form.append('emotion', args.emotion);
-  if (durationSeconds) form.append('duration', String(Math.min(120, Math.max(0.2, durationSeconds))));
+  if (args.style) form.append('style', args.style);
+  if (args.numbers) form.append('numbers', args.numbers);
+  // target_duration really fits the read (pauses, then <=7% pace, then trailing silence); `duration` was ignored.
+  if (extras.durationSeconds) form.append('target_duration', String(Math.min(600, Math.max(0.5, extras.durationSeconds))));
+  if (extras.registerSt !== undefined) form.append('register_st', String(extras.registerSt));
+  if (extras.captions) form.append('captions', extras.captions);
   form.append('response_format', 'json');
   const opts = requestOptions();
   const res = await client.fetch(
@@ -154,7 +182,7 @@ async function synthesize(text: string, args: VoiceArgs, durationSeconds?: numbe
     { method: 'POST', body: form, headers: { 'Idempotency-Key': opts.idempotencyKey } },
     { timeoutInSeconds: opts.timeoutInSeconds, maxRetries: opts.maxRetries }
   );
-  const body = (await res.json().catch(() => null)) as (Tapra.Speech & { detail?: unknown }) | null;
+  const body = (await res.json().catch(() => null)) as (SpeechResult & { detail?: unknown }) | null;
   if (!res.ok || !body?.audio) {
     const detail = body as { error?: { message?: string }; detail?: unknown } | null;
     throw new TapraError({
@@ -727,7 +755,8 @@ export function registerTools(server: McpServer): void {
         `Add non-verbal effects inline with tags (tags count as billed characters): ${effectsMenu()}. Example: "[euh] ما نعرفش, [breath] خلّي نشوف". ` +
         `Set an emotion with \`emotion\` (${EMOTION_IDS.join(', ')}), or change it mid-text with a tag: ` +
         '"عسلامة [whisper] ما تقول لحتى حد [normal] نتلاقاو غدوة". ' +
-        'Saves the audio in the chosen format (wav by default, 18 other formats). ' +
+        'Set `style` for what the audio is for (ad, narration, explainer, reel) and `numbers` for Derja or French numbers. ' +
+        'Saves the audio in the chosen format (wav by default, 18 other formats); `captions` also writes a timed .srt (free). ' +
         'Voice cloning and custom voice design are not currently available: if the user asks to clone a voice, say so ' +
         'and offer these voices. Costs money per character. For long scripts or narration timed to a video, use create_voiceover.',
       inputSchema: {
@@ -737,7 +766,13 @@ export function registerTools(server: McpServer): void {
           .max(2000)
           .describe('What to say: Derja in Arabic script, French/English in Latin letters. May include effect tags like [euh], [hmm], [breath].'),
         ...voiceShape,
-        duration_seconds: z.number().min(0.2).max(120).optional().describe('Force the clip to last this long.'),
+        duration_seconds: z
+          .number()
+          .min(0.5)
+          .max(600)
+          .optional()
+          .describe('Fit the clip to this many seconds: pauses change first, then the pace by at most 7%, then silence is added.'),
+        captions: z.boolean().default(false).describe('Also write a timed .srt next to the audio (free).'),
         format: formatSchema,
         output_path: z.string().optional().describe('Where to save. Relative paths go in the output folder; the extension follows the format.'),
         max_cost_tnd: maxCost
@@ -749,21 +784,27 @@ export function registerTools(server: McpServer): void {
         requireApiKey();
         if (needsFfmpeg(args.format)) await requireFfmpeg(`The ${args.format} format`);
         checkBudget(await estimateSpeech([args.text], args.quality === 'flash'), args.max_cost_tnd, 'This speech');
-        const res = await synthesize(args.text, args, args.duration_seconds);
+        const res = await synthesize(args.text, args, {
+          durationSeconds: args.duration_seconds,
+          captions: args.captions ? 'srt' : undefined
+        });
         const out = resolveOutput(args.output_path, 'speech', extensionFor(args.format));
         await saveAudio(Buffer.from(res.audio, 'base64'), args.format, out);
+        const srtOut = args.captions && res.captions ? out.replace(/\.[^./\\]+$/, '') + '.srt' : undefined;
+        if (srtOut) fs.writeFileSync(srtOut, res.captions!, 'utf8');
         const spend = new Spend();
         spend.add(res.usage);
         return {
           text: [
             `Saved ${res.duration.toFixed(2)} s of audio (${args.format}) to: ${out}`,
+            srtOut ? `Captions: ${srtOut}` : '',
             spend.summary(),
             `Voice: ${voiceName(args.voice)} (${args.quality === 'flash' ? 'Flash' : 'full quality'})`,
             res.spoken_text && res.spoken_text !== res.text ? `Spoken as: ${res.spoken_text}` : ''
           ]
             .filter(Boolean)
             .join('\n'),
-          files: [out]
+          files: srtOut ? [out, srtOut] : [out]
         };
       })
   );
@@ -780,6 +821,7 @@ export function registerTools(server: McpServer): void {
         `Lines may use effect tags (${EFFECT_TAGS}). ` +
         'Writes a folder with the voiceover track (wav or another format), one WAV clip per line, and manifest.json ' +
         '(text + start/end per clip) that video generation tools can follow. Optionally lays the voiceover onto a video. ' +
+        'Every line keeps the pitch level of the first one. `style` and `numbers` work as in text_to_speech. ' +
         'Reports progress per line. Costs money per character.',
       inputSchema: {
         script: z.string().optional().describe('Plain narration text. Split into lines at line breaks and long sentences.'),
@@ -844,6 +886,7 @@ export function registerTools(server: McpServer): void {
         fs.mkdirSync(clipsDir, { recursive: true });
         const spend = new Spend();
         const placed: { audio: MonoAudio; startSeconds: number }[] = [];
+        let registerSt: number | undefined;
         const manifest: { index: number; text: string; start: number; end: number; clip: string }[] = [];
         const warnings: string[] = [];
         let cursor = 0;
@@ -852,9 +895,12 @@ export function registerTools(server: McpServer): void {
         for (const [i, item] of items.entries()) {
           progress(i, total, `Speaking line ${i + 1} of ${items.length}`);
           const slot = timed && item.end! > item.start! ? item.end! - item.start! : undefined;
-          let res: Tapra.Speech;
+          let res: SpeechResult;
           try {
-            res = await synthesize(item.text, args, timed && args.timing === 'fit' ? slot : undefined);
+            res = await synthesize(item.text, args, {
+              durationSeconds: timed && args.timing === 'fit' ? slot : undefined,
+              registerSt
+            });
           } catch (err) {
             throw new Error(
               `Stopped at line ${i + 1} of ${items.length}: ${describeError(err)} ` +
@@ -862,6 +908,7 @@ export function registerTools(server: McpServer): void {
             );
           }
           spend.add(res.usage);
+          if (registerSt === undefined && typeof res.register_st === 'number') registerSt = res.register_st;
           const bytes = Buffer.from(res.audio, 'base64');
           const clipName = `${String(i + 1).padStart(3, '0')}.wav`;
           fs.writeFileSync(path.join(clipsDir, clipName), bytes);

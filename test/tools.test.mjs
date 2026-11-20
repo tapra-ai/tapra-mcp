@@ -177,8 +177,38 @@ describe('speech', () => {
     const r = await tapra.call('create_voiceover', { srt_path: 'dub.srt', voice: 'karim' });
     assert.equal(r.isError, false, r.text);
     const sent = mock.calls('/v1/audio/speech').slice(-2);
-    assert.deepEqual(sent.map((s) => s.fields.duration), ['1.5', '1.5']);
+    assert.deepEqual(sent.map((s) => s.fields.target_duration), ['1.5', '1.5']);
+    assert.equal(sent[0].fields.duration, undefined, 'the ignored `duration` field is no longer sent');
+    assert.equal(sent[0].fields.register_st, undefined, 'the first line sets the register');
+    assert.equal(sent[1].fields.register_st, '7.5', 'later lines keep the first line\'s register');
     assert.equal(sent[1].fields.input, 'ça va', 'speaker tags are not spoken');
+  });
+
+  test('text_to_speech sends style and numbers, and writes captions next to the audio', async () => {
+    const r = await tapra.call('text_to_speech', {
+      text: 'كلمنا على 74250 310',
+      style: 'ad',
+      numbers: 'french',
+      captions: true,
+      duration_seconds: 6,
+      output_path: 'ad.wav'
+    });
+    assert.equal(r.isError, false, r.text);
+    const sent = mock.calls('/v1/audio/speech').at(-1);
+    assert.equal(sent.fields.style, 'ad');
+    assert.equal(sent.fields.numbers, 'french');
+    assert.equal(sent.fields.captions, 'srt');
+    assert.equal(sent.fields.target_duration, '6');
+    assert.equal(sent.fields.duration, undefined);
+    const srt = path.join(folders.output, 'ad.srt');
+    assert.ok(fs.existsSync(srt), 'captions file written');
+    assert.match(r.text, /Captions: /);
+  });
+
+  test('text_to_speech sends no production fields by default', async () => {
+    await tapra.call('text_to_speech', { text: 'Ahla' });
+    const sent = mock.calls('/v1/audio/speech').at(-1);
+    for (const f of ['style', 'numbers', 'captions', 'target_duration', 'register_st']) assert.equal(sent.fields[f], undefined, f);
   });
 
   test('create_voiceover needs exactly one source', async () => {

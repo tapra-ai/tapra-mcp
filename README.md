@@ -55,8 +55,8 @@ claude mcp add tapra -e TAPRA_API_KEY=tapra_sk_live_… -- npx -y @tapra/mcp
 | `transcribe_video` | Subtitles for a video (srt + vtt + txt in one call), readable cue lengths, speaker colors, optional burned-in MP4 | per minute |
 | `name_speakers` | Name the detected speakers (and pick colors); rewrites txt/srt/vtt, merges labels given the same name, can burn the result | free |
 | `diarize_audio` | Who spoke when, without a transcript | per minute |
-| `text_to_speech` | Speak Derja / Arabizi / French / English with a Tapra voice, effect tags, 19 formats | per character |
-| `create_voiceover` | Narration from a script, or dubbing from an SRT, on one timeline; writes the track, per-line clips and `manifest.json`; can lay it onto a video | per character |
+| `text_to_speech` | Speak Derja / Arabizi / French / English with a Tapra voice, effect tags, 19 formats; `style` (ad, narration, explainer, reel), `numbers` (Derja or French), fit to a length, free `.srt` captions | per character |
+| `create_voiceover` | Narration from a script, or dubbing from an SRT, on one timeline (each line fitted to its subtitle slot, one pitch level for all lines); writes the track, per-line clips and `manifest.json`; can lay it onto a video | per character |
 | `play_audio` | Play a file on this computer's speakers (or stop playback) | free |
 | `find_in_transcript` | When is a word or phrase said? Word-level times from a JSON transcript | free |
 | `edit_audio` | Join, trim, remove silences, normalize loudness, fade, convert | free |
