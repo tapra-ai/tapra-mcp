@@ -145,13 +145,15 @@ export async function startMock() {
         if (url === '/v1/audio/speech') {
           const { fields } = await readForm(req, body);
           entry.fields = fields;
-          const d = Number(fields.duration) || Math.max(0.5, (fields.input ?? '').length / 15);
+          const d = Number(fields.target_duration) || Math.max(0.5, (fields.input ?? '').length / 15);
           return json({
             audio: sineWav(d).toString('base64'),
             audio_format: 'wav',
             sample_rate: 24000,
             duration: d,
             text: fields.input,
+            register_st: 7.5,
+            ...(fields.captions ? { captions: '1\n00:00:00,000 --> 00:00:01,000\n' + fields.input + '\n' } : {}),
             converted: false,
             processing_ms: 5,
             model: fields.model,
